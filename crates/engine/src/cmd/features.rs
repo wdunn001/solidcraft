@@ -1540,3 +1540,7 @@ mod offset_plane_face_tests;
 #[cfg(test)]
 #[path = "solid_move_copy_tests.rs"]
 mod solid_move_copy_tests;
+
+#[cfg(test)]
+#[path = "stacked_face_tests.rs"]
+mod stacked_face_tests;

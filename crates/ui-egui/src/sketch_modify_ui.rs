@@ -17,8 +17,12 @@
 //! count of 3 and had no way to reach the command's second count and spacing, so a user who
 //! wanted five instances got three and deleted two.
 //!
-//! `sketch.pattern.circular`, `sketch.scale`, `sketch.mirror` and `sketch.move` are the same gap
-//! and join this module later, each its own change.
+//! `Mod::Scale` serves `sketch.scale`, whose toolbar button reached no tool and no dialog at
+//! all, so a press ran the command with no parameters and the engine answered "`factor` must be
+//! a positive number".
+//!
+//! `sketch.pattern.circular`, `sketch.mirror` and `sketch.move` are the same gap and join this
+//! module later, each its own change.
 //!
 //! The Chamfer Type choice is a row of icon buttons rather than a drop-down: the modes differ
 //! in shape, and a picture of each shape names it better than a line of text.
@@ -57,6 +61,10 @@ pub enum Mod {
     /// `sketch.pattern.rectangular`: how many instances along the picked direction and how far
     /// apart, then the same along the perpendicular direction the command derives from it.
     PatternRect { count: String, spacing: String, count2: String, spacing2: String },
+    /// `sketch.scale`: the factor the picked entities scale by. The base point is the second
+    /// input; with none picked the command scales about the sketch origin, as its own default
+    /// already does.
+    Scale { factor: String },
 }
 
 impl Mod {
@@ -66,6 +74,7 @@ impl Mod {
             Mod::Corner { chamfer: false, .. } => "FILLET",
             Mod::Corner { .. } => "CHAMFER",
             Mod::PatternRect { .. } => "RECTANGULAR PATTERN",
+            Mod::Scale { .. } => "SKETCH SCALE",
         }
     }
 
@@ -76,6 +85,7 @@ impl Mod {
             Mod::Corner { chamfer: false, size, .. } => ("Radius", ValueKind::Length, size),
             Mod::Corner { size, .. } => ("Distance", ValueKind::Length, size),
             Mod::PatternRect { spacing, .. } => ("Spacing", ValueKind::Length, spacing),
+            Mod::Scale { factor } => ("Factor", ValueKind::Unitless, factor),
         })
     }
 }
@@ -90,6 +100,7 @@ fn inputs(k: &Mod) -> Vec<SelInput> {
         // The direction is optional: `sketch.pattern.rectangular` documents sketch x as its
         // default, the way the engine reads it.
         Mod::PatternRect { .. } => vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Direction", AXES, false)],
+        Mod::Scale { .. } => vec![SelInput::new("Entities", CURVES | POINTS, true), SelInput::new("Base point", POINTS, false)],
     }
 }
 
@@ -110,6 +121,7 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<SelInput>)> {
         "sketch.chamfer.two_distance" => corner(true, 1),
         "sketch.chamfer.distance_angle" => corner(true, 2),
         "sketch.pattern.rectangular" => Mod::PatternRect { count: "3".into(), spacing: "20 mm".into(), count2: "1".into(), spacing2: "20 mm".into() },
+        "sketch.scale" => Mod::Scale { factor: "2".into() },
         _ => return None,
     };
     let i = inputs(&k);
@@ -163,6 +175,11 @@ pub fn rows(ui: &mut egui::Ui, k: &mut Mod) -> bool {
                 enter |= field(ui, value);
                 ui.end_row();
             }
+        }
+        Mod::Scale { factor } => {
+            row_label(ui, "Factor");
+            enter |= field(ui, factor);
+            ui.end_row();
         }
     }
     enter
@@ -231,6 +248,32 @@ fn entity_ids(inputs: &[SelInput], i: usize) -> Vec<String> {
         .collect()
 }
 
+/// What input `i` holds.
+fn items(inputs: &[SelInput], i: usize) -> &[Sel] {
+    inputs.get(i).map(|x| x.items.as_slice()).unwrap_or(&[])
+}
+
+/// A picked sketch point as the id its own sketch knows it by. Picking prefixes the sketch
+/// ("`<sketch>:<point>`") so points of any visible sketch stay distinct; a sketch command
+/// names the point alone.
+fn point_id(sel: &Sel) -> Option<&str> {
+    match sel {
+        Sel::SketchPoint { id } => Some(id.split_once(':').map(|(_, p)| p).unwrap_or(id)),
+        _ => None,
+    }
+}
+
+/// A typed scale factor as the command wants it: the field evaluated against the document's
+/// parameters, in the range the command accepts. Checking the range here lets the window say
+/// so in its own error line instead of the status bar.
+fn factor(app: &SolveApp, text: &str) -> Result<f64, String> {
+    let v = app.session.doc.eval(text.trim(), ValueKind::Unitless).map_err(|e| format!("Factor: {e}"))?;
+    if !(v.is_finite() && v > 1e-9 && v < 1e6) {
+        return Err("Factor must be a positive number".into());
+    }
+    Ok(v)
+}
+
 /// The in-plane direction a picked origin axis or straight sketch curve gives the active
 /// sketch, as `sketch.pattern.rectangular` reads its `dir`. None when there is no active
 /// sketch, or when the axis stands perpendicular to the sketch plane and so has no direction
@@ -252,7 +295,7 @@ fn sketch_dir(app: &SolveApp, sel: &Sel) -> Option<Vec2> {
 pub fn arrow(app: &SolveApp, d: &Dialog) -> Option<Vec3> {
     let Kind::SketchModify(k) = &d.kind else { return None };
     match k {
-        Mod::Offset { .. } | Mod::Corner { .. } => None,
+        Mod::Offset { .. } | Mod::Corner { .. } | Mod::Scale { .. } => None,
         Mod::PatternRect { .. } => {
             let plane = app.session.world_state().sketch(app.session.active_sketch?)?.plane;
             let dir = match d.inputs.get(1).and_then(|i| i.items.first()) {
@@ -333,8 +376,8 @@ fn corner_ref(app: &SolveApp, point: &str, flip: bool) -> Result<Value, String> 
 
 /// The command a sketch modify dialog makes.
 ///
-/// `sketch.offset` takes a plain evaluated number for its distance, not an expression string: it
-/// has no model parameter to carry one, unlike `sketch.fillet`'s radius.
+/// `sketch.offset` and `sketch.scale` take a plain evaluated number, not an expression string:
+/// neither has a model parameter to carry one, unlike `sketch.fillet`'s radius.
 ///
 /// `sketch.fillet` takes its radius as an expression: it makes a model parameter to carry one,
 /// and a radius dimension on the arc that follows it. The chamfer commands have no parameter to
@@ -400,6 +443,18 @@ pub fn commands(app: &SolveApp, k: &Mod, inputs: &[SelInput], extra: &Map<String
                 p["dir"] = json!([d.x, d.y]);
             }
             ("sketch.pattern.rectangular", p)
+        }
+        Mod::Scale { factor: text } => {
+            let entities = entity_ids(inputs, 0);
+            if entities.is_empty() {
+                return Err("Select the sketch curves or points to scale first".into());
+            }
+            let f = factor(app, text)?;
+            let mut p = json!({"entities": entities, "factor": f});
+            if let Some(base) = items(inputs, 1).first().and_then(point_id) {
+                p["base"] = json!(base);
+            }
+            ("sketch.scale", p)
         }
     };
     if let Value::Object(m) = &mut params {

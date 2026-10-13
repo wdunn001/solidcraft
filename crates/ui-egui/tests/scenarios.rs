@@ -66,6 +66,61 @@ fn angle_dimension_both_interactive_workflows() {
     }
 }
 
+/// The conic tool's fourth click sets `rho` from where it lands between the chord's midpoint
+/// and the apex, and once the tool is left (here with Escape, as a person who is done placing
+/// conics would), the apex it just placed is an ordinary sketch point: a further drag on it
+/// reshapes the curve. Guards both halves of the real workflow: the shape control this adds,
+/// and that the apex is not left stuck inside the tool's own sticky point-placement mode (a
+/// conic created straight through `engine.execute`, bypassing the tool, could already be
+/// dragged; the tool's own fourth click and its `Escape` to leave are what this test is for).
+#[test]
+fn conic_tool_fourth_click_sets_rho_and_the_apex_stays_draggable_after() {
+    use serde_json::json;
+    let mut h = Harness::new();
+    h.run(&json!([
+        {"call": "engine.execute", "params": {"command": "sketch.create", "params": {"plane": "XY"}}},
+        {"call": "ui.view", "params": {"view": "top"}},
+        {"start": "sketch.conic"},
+        {"click": {"sketch": [0, 0]}},
+        {"click": {"sketch": [40, 0]}},
+        {"click": {"sketch": [20, 20]}},
+        // Chord midpoint (20, 0), apex (20, 20): (20, 14) is 0.7 of the way from one to the
+        // other, so this click should leave the curve with rho approximately 0.7 (a hyperbola).
+        {"click": {"sketch": [20, 14]}},
+        {"expect": {"errors": 0}}
+    ]))
+    .unwrap();
+
+    let sk = h.app.session.model.state().sketches[0].sketch.clone();
+    let (ci, apex_idx, rho) = sk
+        .curves
+        .iter()
+        .enumerate()
+        .find_map(|(i, c)| match c.kind {
+            solidcraft_engine::sketch::CurveKind::Conic { apex, rho, .. } => Some((i, apex, rho)),
+            _ => None,
+        })
+        .expect("the four clicks created a conic");
+    assert!((rho - 0.7).abs() < 0.02, "rho {rho}");
+    let apex_before = sk.point(apex_idx).expect("apex point resolves");
+    assert!(apex_before.dist(solidcraft_engine::geom::Vec2::new(20.0, 20.0)) < 1e-6);
+
+    // Leave the tool (it stays active after placing one conic, the way the ellipse and slot
+    // tools do too, so more can be placed without reselecting it) and drag the apex.
+    h.run(&json!([
+        {"key": "Escape"},
+        {"drag": [{"sketch": [20, 20]}, {"sketch": [10, 30]}], "steps": 4},
+        {"expect": {"errors": 0}}
+    ]))
+    .unwrap();
+
+    let sk_after = h.app.session.model.state().sketches[0].sketch.clone();
+    let apex_after = sk_after.point(apex_idx).expect("apex point still resolves");
+    assert!(apex_before.dist(apex_after) > 1.0, "apex did not move: still at {apex_after:?}");
+    // The same curve, reshaped in place (not replaced): the id survives the drag.
+    assert_eq!(sk_after.curves.get(ci).map(|c| &c.id), sk.curves.get(ci).map(|c| &c.id));
+}
+
 #[test]
 fn home_tab_and_file_recent_open_designs() {
     use serde_json::json;

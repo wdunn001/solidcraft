@@ -363,7 +363,7 @@ fn mode(id: &str) -> Option<Mode> {
         "sketch.circle.three_tangent" => Mode::Entities(3),
         "sketch.constrainer" | "sketch.constraint.polygon" => Mode::Entities(0),
         "sketch.centerline" => Mode::Entities(1),
-        "sketch.mirror" | "sketch.pattern.circular" | "sketch.pattern.rectangular" => Mode::EntitiesThen,
+        "sketch.mirror" | "sketch.pattern.circular" => Mode::EntitiesThen,
         "sketch.project_to_surface" | "sketch.intersection_curve" | "sketch.spun_profile" => Mode::Steps,
         _ => return None,
     })
@@ -428,7 +428,6 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.centerline" => "Centerline: click lines",
             "sketch.mirror" => "Mirror: click entities, right-click, then click the mirror line",
             "sketch.pattern.circular" => "Circular pattern: click entities, right-click, then click the centre",
-            "sketch.pattern.rectangular" => "Rectangular pattern: click entities, right-click, then click two points (direction and spacing)",
             "sketch.project_to_surface" => "Project to surface: click curves of other sketches, right-click, then click the face",
             "sketch.intersection_curve" => "Intersection curve: click two faces",
             "sketch.spun_profile" => "Spun profile: click the body, then the axis line",
@@ -775,19 +774,10 @@ pub fn on_click(app: &mut SolveApp, tool: &mut Tool, proj: &Proj, pos: Pos2) {
                             tool.picks.clear();
                         }
                     }
-                    _ => {
-                        if let Some(p) = at {
-                            tool.pts.push(p);
-                            if tool.pts.len() >= 2 {
-                                let d = tool.pts[1].0 - tool.pts[0].0;
-                                if d.len() > 1e-9 {
-                                    let _ = app.run(cmd, json!({"entities": ents, "dir": xy(d), "count": 3, "spacing": d.len()}));
-                                }
-                                tool.picks.clear();
-                                tool.pts.clear();
-                            }
-                        }
-                    }
+                    // `sketch.pattern.rectangular` left this flow for a tool window: its count
+                    // was hard-coded to 3 here and the command's second count and spacing could
+                    // not be reached at all.
+                    _ => {}
                 }
                 return;
             }

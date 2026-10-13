@@ -21,6 +21,19 @@ fn panel_accent(t: Tokens, tab: &str, panel: &str) -> Color32 {
     }
 }
 
+/// The accent stroke colour for one command's icon. It is `panel_accent` for almost every
+/// command. The two line-type commands are the exception: construction geometry carries one
+/// fixed meaning across the whole app, so `sketch.construction` and `sketch.centerline` draw
+/// their icon in the theme's construction orange rather than in the tab's accent. `icons::paint`
+/// takes the colour from its caller for these two names, and the Sketch Palette's own line type
+/// buttons already pass the same orange, so the toolbar and the palette now agree.
+fn command_accent(t: Tokens, tab: &str, panel: &str, id: &str) -> Color32 {
+    match id {
+        "sketch.construction" | "sketch.centerline" => t.construction_geom,
+        _ => panel_accent(t, tab, panel),
+    }
+}
+
 /// Panels shown on each tab (in order). Commands come from the registry by (tab, panel).
 pub fn panels(tab: &str) -> &'static [&'static str] {
     if let Some(p) = crate::workspace::panels(tab) {
@@ -595,7 +608,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     painter.rect_filled(br, 4.0, t.hover);
                 }
                 if let Some(c) = shown.first().or(cmds.first()) {
-                    let acc = panel_accent(t, &tab, panel);
+                    let acc = command_accent(t, &tab, panel, c.id);
                     icons::paint(&painter, Rect::from_center_size(br.center() - vec2(0.0, 3.0), vec2(26.0, 26.0)), c.icon, t.icon, t.icon_fill, acc);
                 }
                 caret(&painter, pos2(br.center().x, br.bottom() - 3.0), t.text_dim);
@@ -635,7 +648,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                     painter.rect_filled(br, 4.0, t.hover);
                 }
                 let (ink, fill, acc) =
-                    if info.enabled { (t.icon, t.icon_fill, panel_accent(t, &tab, panel)) } else { (t.border, t.panel_header, t.border) };
+                    if info.enabled { (t.icon, t.icon_fill, command_accent(t, &tab, panel, c.id)) } else { (t.border, t.panel_header, t.border) };
                 let icon = match c.id {
                     "sketch.finish" => "finish",
                     "config.table" => "configuration_table",
@@ -889,7 +902,11 @@ fn dropdown_row(app: &SolveApp, ui: &mut egui::Ui, c: &'static solidcraft_engine
     // Every other row keeps the plain accent it always has; only a constraint command's row
     // switches to the constraint red, to match its button on the ribbon.
     let (ink, fill, acc, text) = if info.enabled {
-        let acc = if c.panel == "CONSTRAINTS" { t.glyph_text } else { t.accent };
+        let acc = match c.id {
+            "sketch.construction" | "sketch.centerline" => t.construction_geom,
+            _ if c.panel == "CONSTRAINTS" => t.glyph_text,
+            _ => t.accent,
+        };
         (t.icon, t.icon_fill, acc, t.text)
     } else {
         (t.border, t.panel_header, t.border, t.text_dim)

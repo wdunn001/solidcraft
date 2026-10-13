@@ -243,6 +243,9 @@ pub enum Kind {
     Part(crate::dialogs_parts::Pt),
     /// Edit Text: a sketch text's content and placement (`sketch_text`).
     Text(crate::sketch_text::Tx),
+    /// Sketch-space modify commands: corners, offset, the sketch patterns, scale, mirror
+    /// and move (`sketch_modify_ui`).
+    SketchModify(crate::sketch_modify_ui::Mod),
 }
 
 /// The rest of the Hole dialog: placement, extents, tap type and drill point.
@@ -470,7 +473,8 @@ impl Dialog {
                     .or_else(|| crate::dialogs_appearance::start(app, id))
                     .or_else(|| crate::dialogs_motion::start(app, id))
                     .or_else(|| crate::dialogs_parts::start(app, id))
-                    .or_else(|| crate::sketch_text::start(app, id))?;
+                    .or_else(|| crate::sketch_text::start(app, id))
+                    .or_else(|| crate::sketch_modify_ui::start(app, id))?;
                 Dialog::new(kind, inputs)
             }
         };
@@ -632,6 +636,7 @@ impl Dialog {
             Kind::Sheet(k) => return k.primary(&self.inputs),
             Kind::Surface(k) => return k.primary(),
             Kind::Plastic(k) => return k.primary(),
+            Kind::SketchModify(k) => return k.primary(),
             _ => return None,
         })
     }
@@ -812,6 +817,44 @@ pub(crate) fn combo(ui: &mut egui::Ui, id: &str, labels: &[&str], sel: &mut usiz
     publish_row(&r.response);
 }
 
+pub(crate) fn check(ui: &mut egui::Ui, on: &mut bool) {
+    let r = ui.checkbox(on, "");
+    publish_row(&r);
+}
+
+/// A mode choice as a row of icon buttons rather than a drop-down: every mode is on screen at
+/// once, each drawn as the shape it makes, with its name as the tooltip. `labels` and `icons`
+/// run in step; a mode with no icon gets the fallback square. Publishes the handles a combo
+/// does, `dialog:<row label>:<label>` per mode and `dialog:<row label>` for the row.
+pub(crate) fn icon_choice(ui: &mut egui::Ui, labels: &[&str], icons: &[&str], sel: &mut usize) {
+    let t = Tokens::get();
+    let row = ROW.with(|r| r.borrow().clone());
+    let mut at = None;
+    ui.horizontal(|ui| {
+        for (i, label) in labels.iter().enumerate() {
+            let on = *sel == i;
+            let (r, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), egui::Sense::click());
+            if on {
+                ui.painter().rect_filled(r, 4.0, t.accent);
+            } else if resp.hovered() {
+                ui.painter().rect_filled(r, 4.0, t.hover);
+            }
+            let ink = if on { Color32::WHITE } else { t.icon };
+            crate::icons::paint(ui.painter(), r.shrink(3.0), icons.get(i).copied().unwrap_or(""), ink, t.icon_fill, ink);
+            crate::scenario::publish_handle(&format!("dialog:{row}:{label}"), r.center());
+            if on {
+                at = Some(r.center());
+            }
+            if resp.on_hover_text(tr(label)).clicked() {
+                *sel = i;
+            }
+        }
+    });
+    if let Some(p) = at {
+        crate::scenario::publish_handle(&format!("dialog:{row}"), p);
+    }
+}
+
 thread_local! {
     /// The label of the dialog row being laid out (its widgets publish `dialog:<label>` handles).
     static ROW: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
@@ -882,6 +925,7 @@ fn title(k: &Kind) -> &'static str {
         Kind::Motion(k) => k.title(),
         Kind::Part(_) => "INSERT PART",
         Kind::Text(_) => "EDIT TEXT",
+        Kind::SketchModify(k) => k.title(),
     }
 }
 
@@ -897,6 +941,8 @@ fn hint(inp: &SelInput) -> &'static str {
         "click an axis or sketch line"
     } else if a & CURVES != 0 {
         "click sketch curves"
+    } else if a & selection::POINTS != 0 {
+        "click sketch points"
     } else if a & BODIES != 0 {
         "click bodies"
     } else {
@@ -1972,6 +2018,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     Kind::Motion(k) => enter |= crate::dialogs_motion::rows(app, ui, k, &mut d.inputs),
                     Kind::Part(k) => enter |= crate::dialogs_parts::rows(app, ui, k, &d.inputs),
                     Kind::Text(k) => enter |= crate::sketch_text::rows(ui, k),
+                    Kind::SketchModify(k) => enter |= crate::sketch_modify_ui::rows(ui, k),
                     Kind::ConfirmDelete { with, fail, .. } => {
                         if !with.is_empty() {
                             row_label(ui, "Also deletes");
@@ -2227,7 +2274,7 @@ fn mid_points(extra: &serde_json::Map<String, Value>) -> Vec<(f64, String)> {
         .collect()
 }
 
-const CHAMFER_TYPES: [&str; 3] = ["Equal Distance", "Two Distances", "Distance and Angle"];
+pub(crate) const CHAMFER_TYPES: [&str; 3] = ["Equal Distance", "Two Distances", "Distance and Angle"];
 
 /// A new Fillet or Chamfer dialog's values.
 fn fillet_kind(size: &str, chamfer: bool) -> Kind {
@@ -2959,6 +3006,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
         Kind::Motion(k) => return crate::dialogs_motion::commands(app, k, &d.inputs),
         Kind::Part(k) => return crate::dialogs_parts::commands(app, k, &d.inputs),
         Kind::Text(k) => return crate::sketch_text::commands(app, k),
+        Kind::SketchModify(k) => return crate::sketch_modify_ui::commands(app, k, &d.inputs, &d.extra),
     };
     let mut params = params;
     if let Value::Object(m) = &mut params {

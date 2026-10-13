@@ -97,6 +97,7 @@ mod sketch_display_ui_tests;
 mod sketch_drag_ui_tests;
 #[cfg(test)]
 mod sketch_edit_tests;
+pub mod sketch_modify_ui;
 pub mod sketch_palette;
 pub(crate) mod sketch_text;
 pub mod sketch_tools;

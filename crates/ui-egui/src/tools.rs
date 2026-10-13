@@ -525,6 +525,14 @@ pub(crate) fn preview_curve(t: &Tool, hover: Vec2, sweep: Option<f64>) -> Option
                 curve.reversed = sweep < 0.0;
             }
         }
+        // After the start, end and apex are placed, the cursor sets the shape (`rho`) by where
+        // it falls between the chord's midpoint and the apex: the same relationship the fourth
+        // click reads in `sketch_tools::run_points`.
+        ("sketch.conic", [a, b, x]) => {
+            let rho = solidcraft_engine::sketch::conic_rho_from_point(*a, *x, *b, hover);
+            let (ai, bi, xi) = (sk.add_point(*a, None).ok()?, sk.add_point(*b, None).ok()?, sk.add_point(*x, None).ok()?);
+            sk.add_curve(CurveKind::Conic { a: ai, b: bi, apex: xi, rho }, None).ok()?;
+        }
         ("sketch.ellipse", [c, m]) => {
             let u = (*m - *c).normalized()?;
             let d = hover - *c;

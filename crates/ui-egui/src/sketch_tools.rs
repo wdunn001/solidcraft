@@ -351,7 +351,10 @@ fn mode(id: &str) -> Option<Mode> {
         "sketch.trim" | "sketch.extend" | "sketch.break" => Mode::CurveAt,
         "sketch.line.midpoint" => Mode::Points(2),
         "sketch.arc.tangent" => Mode::Points(2),
-        "sketch.ellipse" | "sketch.conic" | "sketch.slot.center_point" => Mode::Points(3),
+        "sketch.ellipse" | "sketch.slot.center_point" => Mode::Points(3),
+        // A fourth click sets the curve's shape (rho) by where it lands between the chord's
+        // midpoint and the apex, with a live preview while the cursor moves there.
+        "sketch.conic" => Mode::Points(4),
         "sketch.slot.arc_three_point" | "sketch.slot.arc_center" => Mode::Points(4),
         "sketch.spline.fit_point" | "sketch.spline.control_point" | "sketch.spline.control_point_5" => Mode::Points(0),
         "sketch.text" => Mode::Points(1),
@@ -406,7 +409,7 @@ pub fn hint(id: &str) -> Option<String> {
             "sketch.line.midpoint" => "Midpoint line: click the middle, then an end",
             "sketch.arc.tangent" => "Tangent arc: click the end of a line or arc, then the arc's end",
             "sketch.ellipse" => "Ellipse: click the centre, the end of the major axis, then a point on it",
-            "sketch.conic" => "Conic: click the start, the end, then the apex",
+            "sketch.conic" => "Conic: click the start, the end, then the apex; move to shape the curve and click to set it",
             "sketch.slot.center_point" => "Slot: click the centre, an arc centre, then the width",
             "sketch.slot.arc_three_point" => "Arc slot: click start, a point on the arc, the end, then the width",
             "sketch.slot.arc_center" => "Arc slot: click the centre, the start, the end, then the width",
@@ -845,7 +848,12 @@ fn run_points(app: &mut SolveApp, t: &Tool) {
         ("sketch.line.midpoint", [m, e]) => json!({"mid": arg(m), "end": xy(e.0)}),
         ("sketch.arc.tangent", [s, e]) => json!({"start": arg(s), "end": xy(e.0)}),
         ("sketch.ellipse", [c, m, q]) => json!({"center": xy(c.0), "major": xy(m.0), "minor": xy(q.0)}),
-        ("sketch.conic", [a, b, x]) => json!({"start": arg(a), "end": arg(b), "apex": arg(x)}),
+        // The fourth click is not itself a sketch point: it is only where `rho` is read from,
+        // the way the apex's own position (not an id) is enough to shape the curve.
+        ("sketch.conic", [a, b, x, shoulder]) => {
+            let rho = solidcraft_engine::sketch::conic_rho_from_point(a.0, x.0, b.0, shoulder.0);
+            json!({"start": arg(a), "end": arg(b), "apex": arg(x), "rho": rho})
+        }
         ("sketch.slot.center_point", [c, e, w]) => json!({"center": xy(c.0), "end": xy(e.0), "width": width(c.0, e.0, w.0).max(1e-3)}),
         ("sketch.slot.arc_three_point", [a, th, b, w]) => {
             json!({"start": xy(a.0), "through": xy(th.0), "end": xy(b.0), "width": (2.0 * w.0.dist(b.0)).max(1e-3)})

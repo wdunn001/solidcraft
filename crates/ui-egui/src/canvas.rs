@@ -95,8 +95,9 @@ pub fn anchor(app: &SolveApp, d: &Dialog) -> Option<(Vec3, Option<Vec3>)> {
         Kind::Sheet(_) => (at, crate::dialogs_sheet::arrow(app, d).or(normal)),
         Kind::Plastic(_) => (at, normal),
         Kind::PatternRect { .. } => (at, d.inputs.get(1).and_then(|i| i.items.first()).and_then(|x| crate::dialogs::axis_of(app, x)).map(|a| a.1)),
-        // Already computed above, per picked curve; keep it rather than the default below.
-        Kind::SketchModify(_) => (at, normal),
+        // The pattern's own direction where it has one; otherwise the per-curve offset
+        // direction computed above, rather than the default below.
+        Kind::SketchModify(_) => (at, crate::sketch_modify_ui::arrow(app, d).or(normal)),
         _ => (at, None),
     })
 }

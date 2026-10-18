@@ -1019,6 +1019,9 @@ fn library_ensure_default_remote(s: &mut Session, params: &Value) -> Result<Valu
         return Err(bad(cmd, "expected an empty parameter object"));
     }
     let mut mfg = s.doc.manufacture.clone();
+    if library::DEFAULT_CAM_LIBRARY_REMOTE.trim().is_empty() {
+        return Ok(json!({"added": false, "remotes": mfg.library_remotes}));
+    }
     if mfg.library_remotes.iter().any(|r| r.url == library::DEFAULT_CAM_LIBRARY_REMOTE || r.id == "solidcraft-cam") {
         return Ok(json!({"added": false, "remotes": mfg.library_remotes}));
     }

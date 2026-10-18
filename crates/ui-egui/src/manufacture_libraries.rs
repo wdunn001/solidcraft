@@ -63,7 +63,11 @@ impl LibraryDialogState {
             entries: Vec::new(),
             selected: None,
             remote_url: DEFAULT_CAM_LIBRARY_REMOTE.into(),
-            remote_name: "SolidCraft CAM Libraries".into(),
+            remote_name: if DEFAULT_CAM_LIBRARY_REMOTE.is_empty() {
+                String::new()
+            } else {
+                "SolidCraft CAM Libraries".into()
+            },
             status: String::new(),
             filter_cap: String::new(),
         }
@@ -262,8 +266,10 @@ pub fn show_dialogs(app: &mut SolveApp, ui: &mut egui::Ui) {
                     } else {
                         ui.label(RichText::new("Select an entry").weak());
                     }
-                    ui.separator();
-                    ui.label(RichText::new(format!("Default remote:\n{DEFAULT_CAM_LIBRARY_REMOTE}")).small().weak());
+                    if !DEFAULT_CAM_LIBRARY_REMOTE.is_empty() {
+                        ui.separator();
+                        ui.label(RichText::new(format!("Default remote:\n{DEFAULT_CAM_LIBRARY_REMOTE}")).small().weak());
+                    }
                 });
             });
             if !st.status.is_empty() {

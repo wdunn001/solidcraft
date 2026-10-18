@@ -355,6 +355,7 @@ pub fn compute(s: &Session, cmds: &[(String, Value)], colors: Colors) -> Job {
             command.as_str(),
             "sketch.redefine"
                 | "sketch.mirror"
+                | "sketch.move"
                 | "sketch.pattern.rectangular"
                 | "sketch.pattern.circular"
                 | "sketch.offset"
@@ -529,6 +530,17 @@ fn same(a: &Mesh, b: &Mesh) -> bool {
     a.triangles.len() == b.triangles.len() && a.positions == b.positions
 }
 
+fn curve_geometry_changed(old: &solidcraft_engine::doc::SolvedSketch, new: &solidcraft_engine::doc::SolvedSketch, index: usize) -> bool {
+    let (Some(oc), Some(nc)) = (old.sketch.curves.get(index), new.sketch.curves.get(index)) else { return true };
+    if oc.id != nc.id {
+        return true;
+    }
+    oc.kind.point_ids().into_iter().any(|pi| match (old.sketch.point(pi), new.sketch.point(pi)) {
+        (Some(a), Some(b)) => a.dist(b) > 1e-9,
+        _ => true,
+    })
+}
+
 /// The preview scene: changed and new bodies (new surface tinted) and, as a ghost, the old
 /// version of changed or removed bodies.
 pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
@@ -626,8 +638,10 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
                 .iter()
                 .enumerate()
                 .filter_map(|(index, curve)| {
-                    let unchanged = old_curves.contains(curve.id.as_str());
-                    if unchanged { None } else { Some(index) }
+                    if !old_curves.contains(curve.id.as_str()) {
+                        return Some(index);
+                    }
+                    old.as_ref().and_then(|o| curve_geometry_changed(o, sketch, index).then_some(index))
                 })
                 .collect::<Vec<_>>();
             let points = sketch
@@ -635,7 +649,12 @@ pub fn build(before: &ModelState, after: &ModelState, c: Colors) -> Built {
                 .points
                 .iter()
                 .enumerate()
-                .filter_map(|(i, p)| if old_points.contains(p.id.as_str()) { None } else { Some(i) })
+                .filter_map(|(i, p)| {
+                    if !old_points.contains(p.id.as_str()) {
+                        return Some(i);
+                    }
+                    old.as_ref().and_then(|o| o.sketch.point(i).is_some_and(|op| op.dist(p.pos) > 1e-9).then_some(i))
+                })
                 .collect::<Vec<_>>();
             if indices.is_empty() && points.is_empty() { None } else { Some(SketchPreview { sketch: sketch.clone(), curves: indices, points }) }
         })

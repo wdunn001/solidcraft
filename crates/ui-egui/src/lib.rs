@@ -117,6 +117,24 @@ pub(crate) mod display_lod;
 mod file_load_ui_tests;
 #[cfg(test)]
 mod fillet_spline_handle_tests;
+pub mod manufacture_2d;
+pub mod manufacture_3d;
+pub mod manufacture_additive;
+pub mod manufacture_contour;
+pub mod manufacture_drill;
+pub mod manufacture_fabrication;
+pub mod manufacture_hole_recognition;
+pub mod manufacture_inspect;
+pub mod manufacture_inspection;
+pub mod manufacture_libraries;
+pub mod manufacture_modify;
+pub mod manufacture_multiaxis;
+pub mod manufacture_part_handling;
+pub mod manufacture_post;
+pub mod manufacture_setup;
+pub mod manufacture_tools;
+pub mod manufacture_turning;
+pub mod manufacture_workspace;
 pub(crate) mod navigation;
 pub mod palette;
 pub mod params_dialog;
@@ -161,6 +179,7 @@ mod sketch_guidance_ui_tests;
 pub mod sketch_modify_ui;
 #[cfg(test)]
 mod sketch_modify_ui_tests;
+mod sketch_move_ui;
 pub mod sketch_palette;
 mod sketch_pattern_tree;
 #[cfg(test)]
@@ -183,6 +202,7 @@ mod thin_extrude_tests;
 pub mod timeline;
 pub mod timeline_left;
 pub mod titlebar;
+pub mod tool_modifiers;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
@@ -305,6 +325,7 @@ pub struct SolveApp {
     file_picker: Option<file_picker::Pending>,
     pub viewport: viewport::ViewportState,
     pub render_workspace: render_workspace::State,
+    pub manufacture_workspace: manufacture_workspace::State,
     pub tool: Option<tools::Tool>,
     pub dialog: Option<dialogs::Dialog>,
     /// The Change Parameters window, when open.
@@ -438,6 +459,7 @@ impl SolveApp {
             file_picker: None,
             viewport: viewport::ViewportState::default(),
             render_workspace,
+            manufacture_workspace: manufacture_workspace::State::default(),
             tool: None,
             dialog: None,
             params: None,
@@ -674,6 +696,7 @@ impl SolveApp {
                 }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     render_workspace::reset_document(self);
+                    manufacture_workspace::reset_document(self);
                     self.sketch_choices = sketch_families::Choices::default();
                     dim_view::cancel();
                     self.menu.props = None;
@@ -751,6 +774,9 @@ impl SolveApp {
         dim_view::cancel();
         self.tool = None;
         self.home.open = false;
+        // Drop Manufacture floating windows before another command opens, so leftover library
+        // panels do not outlive the command that opened them (and fail the width layout tests).
+        manufacture_workspace::close_floating_dialogs(self);
         if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
             self.pick_open_command(id, json!({}), &[ext]);
             return;
@@ -779,6 +805,9 @@ impl SolveApp {
             return;
         }
         if !sketch_tools::start_hook(self, id) {
+            return;
+        }
+        if !manufacture_workspace::start_hook(self, id) {
             return;
         }
         if solidcraft_engine::find_command(id).is_some_and(|c| c.info(&self.session).enabled) {
@@ -1251,6 +1280,7 @@ impl SolveApp {
         file_picker::tick(self, ctx);
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
+        manufacture_workspace::tick(self, ctx);
         file_load::tick(self, ctx);
         self.esc_handled = false;
         prefs::apply(self, ctx);
@@ -1399,13 +1429,21 @@ impl SolveApp {
         if render_workspace::active(self) {
             render_workspace::panel(self, ui);
         }
+        if manufacture_workspace::active(self) {
+            manufacture_workspace::panel(self, ui);
+        }
         agent_chat::show(self, ui);
         preview::update(self, ui.ctx());
+        // Same shell as Design: central viewport (+ Manufacture overlays). Render owns its own view.
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
             if render_workspace::active(self) {
                 render_workspace::show(self, ui);
             } else {
-                viewport::show(self, ui);
+                if manufacture_workspace::active(self) {
+                    manufacture_workspace::show(self, ui);
+                } else {
+                    viewport::show(self, ui);
+                }
             }
         });
         dialogs::show(self, ui.ctx());

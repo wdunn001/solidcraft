@@ -10,6 +10,8 @@
 mod api;
 #[cfg(any(target_arch = "wasm32", test))]
 mod disk;
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+mod cloud;
 #[cfg(target_arch = "wasm32")]
 mod files;
 #[cfg(target_arch = "wasm32")]
@@ -635,12 +637,23 @@ mod web {
                             download_design: Some(Box::new(files::download)),
                             browser_files: Some(Box::new(move || shown.panel.set(true))),
                             install_app: Some(crate::install::service(&cc.egui_ctx)),
+                            // The cloud sign-in and provider-link pages hand
+                            // out URLs; a browser opens them in a new tab.
+                            open_url: Some(Box::new(|url: &str| {
+                                if let Some(w) = web_sys::window() {
+                                    let _ = w.open_with_url_and_target(url, "_blank");
+                                }
+                            })),
                             ..Default::default()
                         };
                         // Thumbnails of saves and start-page cards.
                         solidcraft_ui_egui::gpu::install_cpu_picture_renderer();
                         let (sender, receiver) = std::sync::mpsc::channel();
                         let mut app = SolveApp::new(Session::default(), services).with_control(receiver);
+                        // Cloud Open/Save through the CloudCraft deployment
+                        // serving this bundle. The session rides its cookie.
+                        #[cfg(feature = "cloud")]
+                        app.cloud.connect(crate::cloud::Service::new(cc.egui_ctx.clone()));
                         if let Some(p) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))) {
                             app.load_prefs(&p);
                         }

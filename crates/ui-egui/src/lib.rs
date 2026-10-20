@@ -1436,8 +1436,11 @@ impl SolveApp {
         scenario::clear_handles();
         self.poll_deferred(ui.ctx());
         // Cloud answers arrive on a channel; a conflict or an open Save to
-        // Cloud window is drawn over whatever page is showing.
+        // Cloud window is drawn over whatever page is showing. The share
+        // dialog is pumped every frame so it asks the service whether sharing
+        // is available: that answer is what shows or hides the Share button.
         cloud::pump(self, ui.ctx());
+        self.share.show(&ui.ctx().clone());
         cloud::conflict_modal(self, ui.ctx());
         cloud::save_window(self, ui.ctx());
         toolbar::app_bar(self, ui);

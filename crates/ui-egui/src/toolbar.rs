@@ -377,18 +377,18 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         // Document tabs (Home first), on the left after File, Undo and Redo.
         let captions = if app.custom_titlebar { crate::titlebar::WIDTH } else { 0.0 };
         let tabs_start = x - step + 25.0;
-        // The top-right corner is the account's, where every office suite keeps
-        // it: the badge and the Share button, in the spot the Preferences gear
-        // used to hold. Everything else on the right ends before it. A narrow
-        // bar gives the corner up rather than cover the tabs.
+        // The account badge and the Share button sit between Help and the
+        // version label, in the slot the Preferences gear used to hold. Help
+        // and Report a bug clear that slot; the version stays in the corner. A
+        // narrow bar gives the slot up rather than cover the tabs.
         let account = crate::cloud::available(app) && !compact_actions;
-        let account_w = if account { 258.0 } else { 0.0 };
+        let account_w = if account { 150.0 } else { 0.0 };
         let right_reserve = captions + account_w;
         let report_text = crate::i18n::tr("ui.report_a_bug");
         let report_font = FontId::proportional(13.0);
         let label_width = ui.painter().layout_no_wrap(report_text.to_string(), report_font.clone(), t.app_bar_text).size().x;
         let (report, report_label) = report_rect(r, right_reserve, tabs_start, label_width);
-        // Help, on the right between Report a bug and the account corner.
+        // Help, on the right between Report a bug and the account slot.
         if click(ui, help_x(r, right_reserve), "help", app.tr("ui.help"), true) {
             app.help.menu = !app.help.menu;
             let at = help_x(r, right_reserve);
@@ -402,12 +402,14 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let span = Rect::from_min_max(pos2(x, report.top()), pos2(report.left() - 6.0, report.bottom()));
         let update = crate::update::button(app, ui, span, report_label);
         let tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
-        // The account badge and the Share button in the corner, right aligned
-        // (the strip runs right to left, so the badge lands furthest right and
-        // Share sits to its left). The Share split button carries Work together
-        // too, when the account allows it.
+        // The account badge and the Share button, just left of the version, in
+        // the gear's old slot. Right aligned: the strip runs right to left, so
+        // the badge lands furthest right (nearest the version) and Share sits
+        // to its left. The split button carries Work together when the account
+        // allows a conversation.
         if account {
-            let strip = Rect::from_min_max(pos2(r.right() - captions - account_w + 8.0, r.top()), pos2(r.right() - captions - 8.0, r.bottom()));
+            let strip_right = r.right() - captions - 62.0;
+            let strip = Rect::from_min_max(pos2(strip_right - account_w + 8.0, r.top()), pos2(strip_right, r.bottom()));
             let mut strip_ui = ui.new_child(egui::UiBuilder::new().max_rect(strip).layout(egui::Layout::right_to_left(egui::Align::Center)));
             strip_ui.set_clip_rect(strip.intersect(ui.clip_rect()));
             crate::cloud::who(app, &mut strip_ui);
@@ -439,10 +441,10 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         // Preferences is not a bar button. It lives in the File menu and on
         // Ctrl+,. A second control for it here only duplicated the File entry.
-        // The version sits left of the account corner (`right_reserve`), so it
-        // keeps clear of the badge when one is shown.
+        // The version stays in the corner; the account slot is drawn to its
+        // left, so it needs no room reserved here.
         ui.painter().text(
-            pos2(r.right() - 12.0 - right_reserve, r.center().y),
+            pos2(r.right() - 12.0 - captions, r.center().y),
             Align2::RIGHT_CENTER,
             format!("v{}", crate::update::current_version()),
             FontId::proportional(11.0),

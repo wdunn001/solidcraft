@@ -26,11 +26,11 @@ solidcraft-ui-egui = { workspace = true }
 # How this app reaches CloudCraft. No provider credential, no provider URL
 # and no provider protocol live in here. The UI crate states the work and
 # opens no socket; this client is the half that answers it.
-craft-cloud-client = { git = "https://github.com/wdunn001/collab-craft", rev = "811e3c0" }
+craft-cloud-client = { git = "https://github.com/wdunn001/collab-craft", rev = "06cfa0f" }
 # The Share dialog's backend (the dialog itself is drawn by the UI crate,
 # which opens no socket). This is the half that reaches CloudCraft.
-collabcraft-share = { git = "https://github.com/wdunn001/collab-craft", rev = "811e3c0" }
-craft-ui = { git = "https://github.com/wdunn001/craft-libs", rev = "3aa7841deee2f9919a4dcca55487db5063293654", features = ["cloud"] }
+collabcraft-share = { git = "https://github.com/wdunn001/collab-craft", rev = "06cfa0f" }
+craft-ui = { git = "https://github.com/wdunn001/craft-libs", rev = "316a7addce818e22fc588b476b6a90ef27a4b42c", features = ["cloud"] }
 solidcraft-space-mouse = { workspace = true }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11", "links"] }
 egui = { workspace = true }

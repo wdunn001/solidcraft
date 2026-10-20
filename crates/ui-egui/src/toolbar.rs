@@ -425,12 +425,16 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let update = crate::update::button(app, ui, span, update_labeled);
         let mut tabs_end = update.map_or(controls_left, |u| u.left()) - 8.0;
         if crate::cloud::available(app) && !compact_actions && tabs_end - tabs_start > 420.0 {
-            let badge = Rect::from_min_max(pos2(tabs_end - 170.0, r.top()), pos2(tabs_end, r.bottom()));
-            let mut badge_ui = ui.new_child(egui::UiBuilder::new().max_rect(badge).layout(egui::Layout::right_to_left(egui::Align::Center)));
-            badge_ui.set_clip_rect(badge.intersect(ui.clip_rect()));
-            crate::cloud::who(app, &mut badge_ui);
-            crate::scenario::publish_rect("titlebar:account", badge);
-            tabs_end = badge.left() - 8.0;
+            let strip = Rect::from_min_max(pos2(tabs_end - 250.0, r.top()), pos2(tabs_end, r.bottom()));
+            let mut strip_ui = ui.new_child(egui::UiBuilder::new().max_rect(strip).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            strip_ui.set_clip_rect(strip.intersect(ui.clip_rect()));
+            crate::cloud::who(app, &mut strip_ui);
+            if crate::cloud::shares(app) {
+                strip_ui.add_space(8.0);
+                let _ = crate::cloud::share_button(app, &mut strip_ui, &crate::cloud::copies());
+            }
+            crate::scenario::publish_rect("titlebar:account", strip);
+            tabs_end = strip.left() - 8.0;
         }
         // Narrow title bars can fit only part of the tab strip. Its hit regions must not
         // extend into the persistent report and window controls.

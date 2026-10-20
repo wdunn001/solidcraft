@@ -20,8 +20,9 @@
 pub use craft_cloud::{Capability, Entry, EntryKind};
 pub use craft_ui::cloud::{
     Account, Busy, CloudApp, CloudBackend, CloudFiles, Conflict, CopyFormat, Destination, DocumentKind, Event, Fault, Folder, Job, Link, Origin,
-    Post, Source, UNAVAILABLE, available, browse, conflict_modal, destination_name, has_target, link, load_shared, open_entry, open_page, origin,
-    parent_of, prefers_cloud, progress, pump, reload_active, save, save_as, save_page, sign_in, sign_out, start, who,
+    Post, Source, UNAVAILABLE, available, browse, can_converse, conflict_modal, destination_name, has_target, link, load_shared, open_entry,
+    open_page, origin, parent_of, prefers_cloud, progress, pump, reload_active, save, save_as, save_page, share_button, shares, sign_in, sign_out,
+    start, who, work_together,
 };
 
 use std::collections::HashMap;
@@ -70,6 +71,13 @@ pub fn status(app: &SolveApp) -> serde_json::Value {
     craft_ui::cloud::report(app)
 }
 
+/// The Save a Copy formats the Share split button offers under the share
+/// itself. SolidCraft has none yet: Export is its own File-menu group, so the
+/// button carries only Share and, when the account allows, Work together.
+pub fn copies() -> Vec<CopyFormat> {
+    Vec::new()
+}
+
 /// The host part of the service address, for the account menu's first line.
 ///
 /// Read from the environment and compiled in nowhere, because the service is
@@ -78,7 +86,8 @@ pub fn status(app: &SolveApp) -> serde_json::Value {
 fn service_host() -> String {
     #[cfg(target_arch = "wasm32")]
     {
-        String::new()
+        // CloudCraft served this page, so the service is wherever it came from.
+        web_sys::window().and_then(|w| w.location().host().ok()).unwrap_or_default()
     }
     #[cfg(not(target_arch = "wasm32"))]
     {

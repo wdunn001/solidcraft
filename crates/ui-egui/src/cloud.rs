@@ -71,6 +71,16 @@ pub fn status(app: &SolveApp) -> serde_json::Value {
     craft_ui::cloud::report(app)
 }
 
+/// Whether the in-app chat is open for the active design.
+pub fn chat_open(app: &SolveApp) -> bool {
+    app.cloud.chat.is_open()
+}
+
+/// Draw the in-app chat panel (the thin UI's host of the conversation).
+pub fn chat_panel(app: &mut SolveApp, ui: &mut egui::Ui) {
+    craft_ui::cloud::chat::show_in(app, ui);
+}
+
 /// The Save a Copy formats the Share split button offers under the share
 /// itself. SolidCraft has none yet: Export is its own File-menu group, so the
 /// button carries only Share and, when the account allows, Work together.

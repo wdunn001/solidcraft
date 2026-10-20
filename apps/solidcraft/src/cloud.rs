@@ -118,6 +118,14 @@ impl Worker {
                 let answer = self.call(|client| client.conversation(&id));
                 self.post(Event::Conversation(answer));
             }
+            Job::Messages { id, after } => {
+                let answer = self.call(|client| client.messages(&id, after.as_deref()));
+                self.post(Event::Messages(answer));
+            }
+            Job::PostMessage { id, text } => {
+                let answer = self.call(|client| client.post_message(&id, &text));
+                self.post(Event::Posted(answer));
+            }
             Job::SignOut => {
                 // The token on disk goes with the session. Leaving it
                 // would sign the user back in on the next run.

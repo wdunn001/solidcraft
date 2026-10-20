@@ -4,6 +4,8 @@
 //! Closing a design with unsaved changes asks first, and so does quitting: one "save changes?"
 //! per design with unsaved changes ([`request_quit`]).
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, pos2, vec2};
 use serde_json::{Value, json};
 use solidcraft_engine::Session;
@@ -15,8 +17,20 @@ use crate::theme::Tokens;
 /// Most designs open at once.
 pub const MAX_OPEN: usize = 32;
 
+/// Stable identity of an open design for the life of the process. Tab indexes
+/// move as tabs open, close and reorder; work answered on a later frame (a
+/// cloud save in flight, see `cloud`) needs a handle that does not. Never
+/// reused within a run, so an answer for a closed design matches nothing
+/// instead of the tab that took its index.
+static NEXT_UID: AtomicU64 = AtomicU64::new(1);
+
+fn next_uid() -> u64 {
+    NEXT_UID.fetch_add(1, Ordering::Relaxed)
+}
+
 /// A design that is not the active one: everything that belongs to it alone.
 pub struct DocSlot {
+    uid: u64,
     session: Session,
     cam: Camera,
     pre_sketch_cam: Option<Camera>,
@@ -36,15 +50,16 @@ struct DocView {
 
 impl DocSlot {
     fn new(session: Session) -> DocSlot {
-        DocSlot { session, cam: Camera::default(), pre_sketch_cam: None, pre_sketch_marker: None, view: DocView::default() }
+        DocSlot { uid: next_uid(), session, cam: Camera::default(), pre_sketch_cam: None, pre_sketch_marker: None, view: DocView::default() }
     }
 }
 
 /// The open designs: one slot per tab; the active tab's slot is empty (its design is in the app).
-#[derive(Default)]
 pub struct Documents {
     slots: Vec<Option<DocSlot>>,
     pub active: usize,
+    /// The active design's stable id ([`uid_at`]); the waiting ones are on their slots.
+    active_uid: u64,
     /// A tab waiting for the answer to "save changes?".
     pub closing: Option<usize>,
     /// Quitting: the tabs answered so far with Don't Save (`None`: not quitting).
@@ -55,11 +70,38 @@ pub struct Documents {
     saving: bool,
 }
 
+impl Default for Documents {
+    fn default() -> Documents {
+        Documents { slots: Vec::new(), active: 0, active_uid: next_uid(), closing: None, quitting: None, choice: Answer::default(), saving: false }
+    }
+}
+
 impl Documents {
     /// Number of open designs (at least the active one).
     pub fn count(&self) -> usize {
         self.slots.len().max(1)
     }
+}
+
+/// The stable id of tab `i` (the active design when `i` is out of range).
+pub fn uid_at(app: &SolveApp, i: usize) -> u64 {
+    if i == app.docs.active {
+        return app.docs.active_uid;
+    }
+    app.docs.slots.get(i).and_then(Option::as_ref).map_or(app.docs.active_uid, |s| s.uid)
+}
+
+/// The stable id of the active design.
+pub fn active_uid(app: &SolveApp) -> u64 {
+    app.docs.active_uid
+}
+
+/// The tab showing the design with this id, if it is still open.
+pub fn index_of(app: &SolveApp, uid: u64) -> Option<usize> {
+    if uid == app.docs.active_uid {
+        return Some(app.docs.active);
+    }
+    app.docs.slots.iter().position(|s| s.as_ref().is_some_and(|d| d.uid == uid))
 }
 
 fn take_view(app: &mut SolveApp) -> DocView {
@@ -106,6 +148,7 @@ fn swap_in(app: &mut SolveApp, slot: DocSlot) -> DocSlot {
     crate::sketch_attachment_ui::clear(app);
     let out_rev = app.session.revision;
     let out = DocSlot {
+        uid: std::mem::replace(&mut app.docs.active_uid, slot.uid),
         session: std::mem::replace(&mut app.session, slot.session),
         cam: std::mem::replace(&mut app.cam, slot.cam),
         pre_sketch_cam: std::mem::replace(&mut app.pre_sketch_cam, slot.pre_sketch_cam),
@@ -171,6 +214,8 @@ pub fn adopt(app: &mut SolveApp, session: Session) {
         app.menu.props = None;
         crate::sketch_attachment_ui::clear(app);
         app.session.replace_design(session);
+        // The blank it replaced is gone: this is a different document.
+        app.docs.active_uid = next_uid();
         crate::render_workspace::reset_document(app);
         app.sketch_choices = crate::sketch_families::Choices::default();
         app.session.invalidate_view(rev);
@@ -719,6 +764,35 @@ mod tests {
         assert_eq!(a.docs.active, 0);
         close(&mut a, 0, true);
         assert!(active_is_blank(&a) && a.home.open);
+    }
+
+    /// A design's stable id follows it through switching, closing and index
+    /// reassignment, and is never handed out twice. Work answered on a later
+    /// frame (a cloud save in flight) finds its design by this id, so a tab
+    /// index moving underneath it must not matter.
+    #[test]
+    fn a_design_keeps_its_id_while_tab_indexes_move() {
+        let mut a = app();
+        let first = active_uid(&a);
+        new_tab(&mut a);
+        new_tab(&mut a);
+        let (second, third) = (uid_at(&a, 1), uid_at(&a, 2));
+        assert_eq!(uid_at(&a, 0), first);
+        assert_eq!(active_uid(&a), third);
+        assert!(first != second && second != third && first != third);
+        switch(&mut a, 0);
+        assert_eq!(active_uid(&a), first, "the id travels with the design, never the index");
+        assert_eq!(uid_at(&a, 2), third);
+        assert_eq!(index_of(&a, second), Some(1));
+        // Closing the middle tab moves the third design's index; its id stays.
+        close(&mut a, 1, true);
+        assert_eq!(index_of(&a, third), Some(1));
+        assert_eq!(index_of(&a, second), None, "a closed design's id matches nothing");
+        // A design adopted over a blank is a different document.
+        close(&mut a, 1, true);
+        let blank = active_uid(&a);
+        adopt(&mut a, Session::default());
+        assert_ne!(active_uid(&a), blank);
     }
 
     /// The tab strip's + opens a tab every time, an empty design's included; over the start

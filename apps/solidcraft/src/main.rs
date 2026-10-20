@@ -18,6 +18,7 @@
 #[cfg(not(target_os = "macos"))]
 #[path = "../../../assets/icons/app/shared/source/app_icon.rs"]
 mod app_icon;
+mod cloud;
 mod control_server;
 #[cfg(target_os = "windows")]
 mod native_crash;
@@ -210,6 +211,11 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
         install_app: None,
         agent_http: Some(std::sync::Arc::new(agent_http)),
         secrets: Some(std::sync::Arc::new(Keychain)),
+        open_url: Some(Box::new(|url| {
+            if let Err(e) = cloud::open_browser(url) {
+                log::warn!("could not open a browser: {e}");
+            }
+        })),
         show_in_folder: Some(Box::new(|path| {
             let folder = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new("."));
             let mut command = std::process::Command::new(if cfg!(target_os = "windows") {
@@ -589,6 +595,10 @@ fn main() -> eframe::Result {
             solidcraft_engine::crash::phase("app setup");
             solidcraft_ui_egui::fonts::setup_fonts(&cc.egui_ctx);
             let mut app = SolveApp::new(Session::default(), services(cc));
+            // Cloud Open and Save, when a CloudCraft service is configured.
+            if let Some(backend) = cloud::service(cc.egui_ctx.clone()) {
+                app.cloud.connect(backend);
+            }
             app.apply_off_thread = Some(solidcraft_ui_egui::dialogs::APPLY_AT_ONCE);
             app.custom_titlebar = CUSTOM_TITLEBAR;
             // Windows: the OS hit test offers the resize border, at the window's DPI, from the

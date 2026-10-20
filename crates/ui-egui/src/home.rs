@@ -475,12 +475,17 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
             // Cloud files, when a CloudCraft service is configured. The same
             // pages every Craft app offers, beside the local sections and
-            // never in place of them.
+            // never in place of them. The list waits for a click: drawing it
+            // asks who is signed in, and the worker then opens a browser to
+            // sign in, which a launch must not do by itself.
             if crate::cloud::available(app) {
                 ui.add_space(24.0);
                 section(ui, app.tr_label("Cloud"));
-                crate::cloud::start(app);
-                crate::cloud::open_page(app, ui);
+                if app.cloud_browse {
+                    crate::cloud::open_page(app, ui);
+                } else if ui.button(format!("{}…", app.tr_label("Browse cloud files"))).clicked() {
+                    app.cloud_browse = true;
+                }
             }
             ui.add_space(24.0);
             section(ui, app.tr("home.samples"));

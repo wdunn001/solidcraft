@@ -139,6 +139,22 @@ pub fn index_of(app: &SolveApp, uid: u64) -> Option<usize> {
     app.docs.slots.iter().position(|s| s.as_ref().is_some_and(|d| d.uid == uid))
 }
 
+/// The design with this id, while it is still open.
+pub(crate) fn session_of(app: &SolveApp, uid: u64) -> Option<&Session> {
+    if uid == app.docs.active_uid {
+        return Some(&app.session);
+    }
+    app.docs.slots.iter().flatten().find(|s| s.uid == uid).map(|s| &s.session)
+}
+
+/// The design with this id, for an answer that changes it (a cloud save marking it saved).
+pub(crate) fn session_of_mut(app: &mut SolveApp, uid: u64) -> Option<&mut Session> {
+    if uid == app.docs.active_uid {
+        return Some(&mut app.session);
+    }
+    app.docs.slots.iter_mut().flatten().find(|s| s.uid == uid).map(|s| &mut s.session)
+}
+
 fn take_view(app: &mut SolveApp) -> DocView {
     DocView { render: std::mem::take(&mut app.render_workspace.view) }
 }

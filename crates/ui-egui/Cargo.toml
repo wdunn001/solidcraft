@@ -10,6 +10,14 @@ workspace = true
 
 [dependencies]
 solidcraft-engine = { workspace = true }
+# The shared cloud Open/Save pages, account badge and Share split button
+# (craft_ui::cloud, behind the `cloud` feature). The interface half opens no
+# socket, so this builds for the web. The host application supplies the
+# backend that reaches the service, as it already supplies the file pickers.
+craft-ui = { git = "https://github.com/wdunn001/craft-libs", rev = "3aa7841deee2f9919a4dcca55487db5063293654", features = ["cloud"] }
+# The cloud contracts the pages speak (entries, destinations, faults). No
+# vendor, no IO.
+craft-cloud = { git = "https://github.com/wdunn001/craft-libs", rev = "3aa7841deee2f9919a4dcca55487db5063293654" }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 solidcraft-gpu = { workspace = true }

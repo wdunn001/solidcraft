@@ -14,6 +14,7 @@ pub mod agent_cursor;
 pub mod bom_panel;
 pub mod browser;
 pub mod canvas;
+pub mod cloud;
 #[cfg(test)]
 mod colour_tokens_tests;
 #[cfg(test)]

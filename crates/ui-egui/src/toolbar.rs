@@ -394,7 +394,18 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         // the bar's own buttons on the left (File, Undo and Redo, which end before `x`).
         let span = Rect::from_min_max(pos2(x, report.top()), pos2(report.left() - 6.0, report.bottom()));
         let update = crate::update::button(app, ui, span, report_label);
-        let tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
+        let mut tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
+        // The account badge, when a cloud service is configured: right of the
+        // tabs, in the corner every office suite keeps it. A narrow bar drops
+        // it before it covers the tabs.
+        if crate::cloud::available(app) && !compact_actions && tabs_end - tabs_start > 420.0 {
+            let badge = Rect::from_min_max(pos2(tabs_end - 170.0, r.top()), pos2(tabs_end, r.bottom()));
+            let mut badge_ui = ui.new_child(egui::UiBuilder::new().max_rect(badge).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            badge_ui.set_clip_rect(badge.intersect(ui.clip_rect()));
+            crate::cloud::who(app, &mut badge_ui);
+            crate::scenario::publish_rect("titlebar:account", badge);
+            tabs_end = badge.left() - 8.0;
+        }
         // Narrow title bars can fit only part of the tab strip. Its hit regions must not
         // extend into the persistent report and window controls.
         let tabs_rect = Rect::from_min_max(pos2(tabs_start.min(tabs_end), r.top()), pos2(tabs_end, r.bottom()));
@@ -522,6 +533,17 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     save_as_with_extension(app, "json");
                     close = true;
                 }
+                if crate::cloud::available(app) {
+                    ui.separator();
+                    if item(ui, &format!("{}…", app.tr_label("Open from Cloud")), "") {
+                        let _ = app.run("cloud.open", json!({}));
+                        close = true;
+                    }
+                    if item_if(ui, &format!("{}…", app.tr_label("Save to Cloud")), "", shown) {
+                        app.cloud_save_window = true;
+                        close = true;
+                    }
+                }
                 ui.separator();
                 if item_if(ui, "Save as mesh…", "", shown) {
                     app.start("file.save_mesh");
@@ -595,7 +617,9 @@ pub fn save(app: &mut SolveApp) {
         app.tree.capture_prompt = Some(crate::browser::SAVE.into());
         return;
     }
-    if app.session.path.is_some() {
+    // A design that came from the cloud and has no local file saves back to
+    // the cloud (`cloud::command` intercepts `file.save` for exactly that).
+    if app.session.path.is_some() || crate::cloud::has_target(app) {
         let _ = app.run("file.save", json!({}));
     } else {
         save_as(app);

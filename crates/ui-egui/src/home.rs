@@ -473,6 +473,15 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                     }
                 });
             }
+            // Cloud files, when a CloudCraft service is configured. The same
+            // pages every Craft app offers, beside the local sections and
+            // never in place of them.
+            if crate::cloud::available(app) {
+                ui.add_space(24.0);
+                section(ui, app.tr_label("Cloud"));
+                crate::cloud::start(app);
+                crate::cloud::open_page(app, ui);
+            }
             ui.add_space(24.0);
             section(ui, app.tr("home.samples"));
             grid(ui, samples.len(), |ui, i| {

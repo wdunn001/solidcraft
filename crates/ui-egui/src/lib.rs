@@ -322,6 +322,8 @@ pub struct SolveApp {
     pub share: craft_ui::share::ShareDialog,
     /// Who else is in the design, when shared editing is connected.
     pub presence: craft_ui::presence::PresenceBar,
+    /// The Save to Cloud window, when open ([`cloud::save_window`]).
+    pub cloud_save_window: bool,
     file_picker: Option<file_picker::Pending>,
     pub viewport: viewport::ViewportState,
     pub render_workspace: render_workspace::State,
@@ -465,6 +467,7 @@ impl SolveApp {
             cloud_sent: cloud::Sent::new(),
             share: craft_ui::share::ShareDialog::new(),
             presence: craft_ui::presence::PresenceBar::new().badges_only(),
+            cloud_save_window: false,
             file_picker: None,
             viewport: viewport::ViewportState::default(),
             render_workspace,
@@ -667,6 +670,11 @@ impl SolveApp {
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         if self.file_load.busy() || self.file_picker.is_some() {
             return Err("a file operation is in progress".into());
+        }
+        // The cloud commands, and `file.save` for a cloud-origin design with
+        // no local file. Everything else goes to the engine as it always did.
+        if let Some(r) = cloud::command(self, id, &params) {
+            return r;
         }
         let t0 = now_ms();
         let r = self.session.execute(id, &params).map_err(|e| e.to_string());
@@ -1422,6 +1430,11 @@ impl SolveApp {
     fn cad_ui(&mut self, ui: &mut egui::Ui, report_input: &mut Option<issue_report::CadInput>) {
         scenario::clear_handles();
         self.poll_deferred(ui.ctx());
+        // Cloud answers arrive on a channel; a conflict or an open Save to
+        // Cloud window is drawn over whatever page is showing.
+        cloud::pump(self, ui.ctx());
+        cloud::conflict_modal(self, ui.ctx());
+        cloud::save_window(self, ui.ctx());
         toolbar::app_bar(self, ui);
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());

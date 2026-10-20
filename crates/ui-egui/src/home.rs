@@ -877,8 +877,11 @@ fn start_content(app: &mut SolveApp, ui: &mut egui::Ui, action: &mut Option<File
     if crate::cloud::available(app) {
         ui.add_space(t.file_section_gap);
         FileView::section(ui, app.tr_label("Cloud"), t.space_10, |ui| {
-            crate::cloud::start(app);
-            crate::cloud::open_page(app, ui);
+            if app.cloud_browse {
+                crate::cloud::open_page(app, ui);
+            } else if ui.button(format!("{}…", app.tr_label("Browse cloud files"))).clicked() {
+                app.cloud_browse = true;
+            }
         });
     }
     ui.add_space(t.file_section_gap);

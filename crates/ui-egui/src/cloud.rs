@@ -108,6 +108,7 @@ pub fn command(app: &mut SolveApp, id: &str, p: &serde_json::Value) -> Option<Re
                 return Some(Err(UNAVAILABLE.to_owned()));
             }
             app.home.open = true;
+            app.cloud_browse = true;
             start(app);
             Ok(status(app))
         }

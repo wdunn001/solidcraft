@@ -988,7 +988,7 @@ dependencies = [
 [[package]]
 name = "craft-cloud-client"
 version = "0.1.0"
-source = "git+https://github.com/wdunn001/collab-craft?rev=82c339c#82c339c3bf35a1a0d12a5553bf5bc2f666c7f0ff"
+source = "git+https://github.com/wdunn001/collab-craft?rev=811e3c0#811e3c070a9f7e8566c100709c6c49034761dbfe"
 dependencies = [
  "craft-cloud",
  "craft-collab",
@@ -1007,7 +1007,7 @@ dependencies = [
 [[package]]
 name = "craft-collab"
 version = "0.1.0"
-source = "git+https://github.com/wdunn001/collab-craft?rev=82c339c#82c339c3bf35a1a0d12a5553bf5bc2f666c7f0ff"
+source = "git+https://github.com/wdunn001/collab-craft?rev=811e3c0#811e3c070a9f7e8566c100709c6c49034761dbfe"
 dependencies = [
  "js-sys",
  "log",
@@ -4367,6 +4367,7 @@ dependencies = [
 name = "solidcraft-web"
 version = "0.16.2"
 dependencies = [
+ "craft-cloud-client",
  "eframe",
  "egui",
  "js-sys",

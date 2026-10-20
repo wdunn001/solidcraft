@@ -377,14 +377,21 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         // Document tabs (Home first), on the left after File, Undo and Redo.
         let captions = if app.custom_titlebar { crate::titlebar::WIDTH } else { 0.0 };
         let tabs_start = x - step + 25.0;
+        // The top-right corner is the account's, where every office suite keeps
+        // it: the badge and the Share button, in the spot the Preferences gear
+        // used to hold. Everything else on the right ends before it. A narrow
+        // bar gives the corner up rather than cover the tabs.
+        let account = crate::cloud::available(app) && !compact_actions;
+        let account_w = if account { 258.0 } else { 0.0 };
+        let right_reserve = captions + account_w;
         let report_text = crate::i18n::tr("ui.report_a_bug");
         let report_font = FontId::proportional(13.0);
         let label_width = ui.painter().layout_no_wrap(report_text.to_string(), report_font.clone(), t.app_bar_text).size().x;
-        let (report, report_label) = report_rect(r, captions, tabs_start, label_width);
-        // Help, on the right between Report a bug and Preferences.
-        if click(ui, help_x(r, captions), "help", app.tr("ui.help"), true) {
+        let (report, report_label) = report_rect(r, right_reserve, tabs_start, label_width);
+        // Help, on the right between Report a bug and the account corner.
+        if click(ui, help_x(r, right_reserve), "help", app.tr("ui.help"), true) {
             app.help.menu = !app.help.menu;
-            let at = help_x(r, captions);
+            let at = help_x(r, right_reserve);
             ui.ctx().data_mut(|d| {
                 d.insert_temp(egui::Id::new("sc_help_opened"), true);
                 d.insert_temp(egui::Id::new("sc_help_anchor"), at);
@@ -394,14 +401,13 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         // the bar's own buttons on the left (File, Undo and Redo, which end before `x`).
         let span = Rect::from_min_max(pos2(x, report.top()), pos2(report.left() - 6.0, report.bottom()));
         let update = crate::update::button(app, ui, span, report_label);
-        let mut tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
-        // The account badge and the Share button, when a cloud service is
-        // configured: right of the tabs, in the corner every office suite
-        // keeps them, and in that order because this strip runs right to left.
-        // A narrow bar drops them before they cover the tabs. The Share split
-        // button carries Work together too, when the account allows it.
-        if crate::cloud::available(app) && !compact_actions && tabs_end - tabs_start > 420.0 {
-            let strip = Rect::from_min_max(pos2(tabs_end - 250.0, r.top()), pos2(tabs_end, r.bottom()));
+        let tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
+        // The account badge and the Share button in the corner, right aligned
+        // (the strip runs right to left, so the badge lands furthest right and
+        // Share sits to its left). The Share split button carries Work together
+        // too, when the account allows it.
+        if account {
+            let strip = Rect::from_min_max(pos2(r.right() - captions - account_w + 8.0, r.top()), pos2(r.right() - captions - 8.0, r.bottom()));
             let mut strip_ui = ui.new_child(egui::UiBuilder::new().max_rect(strip).layout(egui::Layout::right_to_left(egui::Align::Center)));
             strip_ui.set_clip_rect(strip.intersect(ui.clip_rect()));
             crate::cloud::who(app, &mut strip_ui);
@@ -410,7 +416,6 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let _ = crate::cloud::share_button(app, &mut strip_ui, &crate::cloud::copies());
             }
             crate::scenario::publish_rect("titlebar:account", strip);
-            tabs_end = strip.left() - 8.0;
         }
         // Narrow title bars can fit only part of the tab strip. Its hit regions must not
         // extend into the persistent report and window controls.
@@ -434,8 +439,10 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
         // Preferences is not a bar button. It lives in the File menu and on
         // Ctrl+,. A second control for it here only duplicated the File entry.
+        // The version sits left of the account corner (`right_reserve`), so it
+        // keeps clear of the badge when one is shown.
         ui.painter().text(
-            pos2(r.right() - 12.0 - captions, r.center().y),
+            pos2(r.right() - 12.0 - right_reserve, r.center().y),
             Align2::RIGHT_CENTER,
             format!("v{}", crate::update::current_version()),
             FontId::proportional(11.0),

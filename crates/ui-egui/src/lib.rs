@@ -393,6 +393,10 @@ pub struct SolveApp {
     pub presence: craft_ui::presence::PresenceBar,
     /// The Save to Cloud window, when open ([`cloud::save_window`]).
     pub cloud_save_window: bool,
+    /// Home shows the cloud file list. Off until a gesture asks for it: the
+    /// first thing the list does is ask who is signed in, and the worker then
+    /// opens a browser to sign in. A launch must not do that by itself.
+    pub cloud_browse: bool,
     file_picker: Option<file_picker::Pending>,
     /// A Save or Save As being written on a worker (see [`save_job`]).
     saving: Option<save_job::Saving>,
@@ -568,6 +572,7 @@ impl SolveApp {
             share: craft_ui::share::ShareDialog::new(),
             presence: craft_ui::presence::PresenceBar::new().badges_only(),
             cloud_save_window: false,
+            cloud_browse: false,
             file_picker: None,
             saving: None,
             viewport: viewport::ViewportState::default(),

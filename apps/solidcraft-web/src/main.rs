@@ -588,6 +588,18 @@ mod web {
                 log::error!("missing <canvas id=\"{CANVAS_ID}\">");
                 return;
             };
+            // Keyed invite: CloudCraft redeemed a share link and sent us here.
+            // Asked once before the canvas starts, so a dead link is a page and
+            // not an empty design.
+            #[cfg(feature = "cloud")]
+            let invite = match craft_cloud_client::invite::arrive().await {
+                craft_cloud_client::invite::Arrival::Ordinary => None,
+                craft_cloud_client::invite::Arrival::Refused(reason) => {
+                    craft_cloud_client::invite::refuse(&reason);
+                    return;
+                }
+                craft_cloud_client::invite::Arrival::Invited(invitation) => Some(invitation),
+            };
             let mut options = eframe::WebOptions { depth_buffer: DEPTH_BITS, ..Default::default() };
             if webgl()
                 && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
@@ -651,9 +663,23 @@ mod web {
                         let (sender, receiver) = std::sync::mpsc::channel();
                         let mut app = SolveApp::new(Session::default(), services).with_control(receiver);
                         // Cloud Open/Save through the CloudCraft deployment
-                        // serving this bundle. The session rides its cookie.
+                        // serving this bundle. The session rides its cookie, so
+                        // asking who is signed in opens no browser here (unlike
+                        // the desktop device flow): the account, and with it the
+                        // badge, Share and chat, loads at once. The file list is
+                        // shown from the start for the same reason.
                         #[cfg(feature = "cloud")]
-                        app.cloud.connect(crate::cloud::Service::new(cc.egui_ctx.clone()));
+                        {
+                            app.cloud.connect(crate::cloud::Service::new(cc.egui_ctx.clone()));
+                            if let Some(share) = collabcraft_share::CollabCraft::from_env() {
+                                app.share.connect(share.for_app("solidcraft"));
+                            }
+                            solidcraft_ui_egui::cloud::start(&mut app);
+                            app.cloud_browse = true;
+                            if let Some(invitation) = invite {
+                                open_invite(&mut app, invitation);
+                            }
+                        }
                         if let Some(p) = cc.storage.and_then(|s| solidcraft_ui_egui::prefs::stored(|k| s.get_string(k))) {
                             app.load_prefs(&p);
                         }
@@ -705,6 +731,28 @@ mod web {
                 }
             }
         });
+    }
+
+    /// Open a design a keyed share link carried, and join its relay.
+    #[cfg(feature = "cloud")]
+    fn open_invite(app: &mut SolveApp, invitation: craft_cloud_client::invite::Invitation) {
+        use solidcraft_ui_egui::cloud::CloudApp as _;
+        let name = invitation.name.clone();
+        match app.open_bytes(&name, invitation.document.clone()) {
+            Ok(Some(_)) => {
+                let mode = if invitation.read_only() { " (view only)" } else { "" };
+                let who = if invitation.recipient.is_empty() { String::new() } else { format!(" (shared with {})", invitation.recipient) };
+                app.set_status(format!("Opened \"{name}\"{mode}{who}"), false);
+                if let Err(e) = invitation.join() {
+                    log::warn!("invite relay join failed: {e}");
+                }
+            }
+            Ok(None) => app.set_status(format!("Shared \"{name}\" needs a choice before it opens"), false),
+            Err(e) => {
+                log::error!("invite open failed: {e}");
+                craft_cloud_client::invite::refuse(&format!("The shared design could not be opened. {e}"));
+            }
+        }
     }
 }
 

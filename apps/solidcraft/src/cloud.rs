@@ -238,6 +238,19 @@ fn fault(e: Error) -> Fault {
     }
 }
 
+/// A client for the share dialog, built fresh for each of its requests.
+///
+/// Separate from the Open and Save worker, so a large save on that worker's
+/// queue never holds up a share autocomplete. They share what matters, the
+/// service and the saved session, so a sign-in through either reaches both.
+pub fn client() -> Option<Client> {
+    let mut client = Client::new(base_url()?);
+    if let Some(token) = load_token() {
+        client = client.with_token(token);
+    }
+    Some(client)
+}
+
 /// Where the session token lives.
 ///
 /// Beside the application's own settings. It is a session the user created in

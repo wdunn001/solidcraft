@@ -1688,6 +1688,7 @@ impl SolveApp {
         self.poll_deferred(ui.ctx());
         self.poll_delete_check(ui.ctx());
         cloud::pump(self, ui.ctx());
+        self.share.show(&ui.ctx().clone());
         cloud::conflict_modal(self, ui.ctx());
         cloud::save_window(self, ui.ctx());
         toolbar::app_bar(self, ui);

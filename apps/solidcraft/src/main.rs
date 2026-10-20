@@ -599,6 +599,9 @@ fn main() -> eframe::Result {
             if let Some(backend) = cloud::service(cc.egui_ctx.clone()) {
                 app.cloud.connect(backend);
             }
+            // The Share dialog's backend. It asks for a client each request,
+            // so a session collected later is picked up without a restart.
+            app.share.connect(collabcraft_share::CollabCraft::from_fn(cloud::client).for_app("solidcraft"));
             app.apply_off_thread = Some(solidcraft_ui_egui::dialogs::APPLY_AT_ONCE);
             app.custom_titlebar = CUSTOM_TITLEBAR;
             // Windows: the OS hit test offers the resize border, at the window's DPI, from the

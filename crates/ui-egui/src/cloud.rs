@@ -92,6 +92,108 @@ fn service_host() -> String {
     }
 }
 
+/// The cloud commands, and the one engine command the cloud intercepts.
+///
+/// `file.save` is taken over only for a design that came from the cloud and
+/// has no local file of its own, so saving a local design behaves exactly as
+/// it always did. Everything else is a `cloud.*` command: UI state, answered
+/// here and never sent to the engine.
+pub fn command(app: &mut SolveApp, id: &str, p: &serde_json::Value) -> Option<Result<serde_json::Value, String>> {
+    use serde_json::{Value as Json, json};
+    let r = match id {
+        "file.save" if p.get("path").is_none() && app.session.path.is_none() && has_target(app) => save(app),
+        "cloud.status" => Ok(status(app)),
+        "cloud.open" => {
+            if !available(app) {
+                return Some(Err(UNAVAILABLE.to_owned()));
+            }
+            app.home.open = true;
+            start(app);
+            Ok(status(app))
+        }
+        "cloud.browse" => {
+            if !available(app) {
+                return Some(Err(UNAVAILABLE.to_owned()));
+            }
+            let path = p.get("path").and_then(Json::as_str).unwrap_or("");
+            browse(app, path);
+            Ok(json!({"folder": path}))
+        }
+        "cloud.shared" => {
+            if !available(app) {
+                return Some(Err(UNAVAILABLE.to_owned()));
+            }
+            load_shared(app);
+            Ok(Json::Null)
+        }
+        "cloud.link" => {
+            if !available(app) {
+                return Some(Err(UNAVAILABLE.to_owned()));
+            }
+            link(app);
+            Ok(status(app))
+        }
+        // Opens something already listed, by id or by name. The listing is
+        // what the user can see, which keeps a scripted open and a clicked
+        // one on the same footing.
+        "cloud.openFile" => {
+            let id = p.get("id").and_then(Json::as_str);
+            let name = p.get("name").and_then(Json::as_str).unwrap_or("");
+            let found = app
+                .cloud
+                .mine
+                .entries
+                .iter()
+                .chain(app.cloud.shared.entries.iter())
+                .find(|e| id.is_some_and(|id| e.id == id) || (!name.is_empty() && e.name == name))
+                .cloned();
+            match found {
+                Some(entry) if opens(&entry) => {
+                    open_entry(app, entry, None);
+                    Ok(status(app))
+                }
+                Some(entry) => return Some(Err(format!("SolidCraft cannot open {}", entry.name))),
+                None => return Some(Err("no such file in the cloud listing".to_owned())),
+            }
+        }
+        "cloud.save" => save(app),
+        "cloud.saveAs" => match (p.get("folder").and_then(Json::as_str), p.get("name").and_then(Json::as_str)) {
+            (Some(folder), Some(name)) => save_as(app, folder, name),
+            _ => {
+                if !available(app) {
+                    return Some(Err(UNAVAILABLE.to_owned()));
+                }
+                app.cloud_save_window = true;
+                Ok(status(app))
+            }
+        },
+        "cloud.reload" => reload_active(app),
+        _ => return None,
+    };
+    Some(r)
+}
+
+/// The floating Save to Cloud window.
+///
+/// SolidCraft saves through a native picker and has no Backstage Save As page,
+/// so the cloud destination gets a window of its own: pick a folder, name the
+/// design, save. It closes when a save starts.
+pub fn save_window(app: &mut SolveApp, ctx: &egui::Context) {
+    if !app.cloud_save_window {
+        return;
+    }
+    let mut open = true;
+    let title = SolveApp::tr(app, "Save to Cloud").to_owned();
+    crate::frame::window(ctx, title, crate::frame::Width::Wide).id(egui::Id::new("sc_cloud_save")).open(&mut open).resizable(true).show(ctx, |ui| {
+        if save_page(app, ui) {
+            app.cloud_save_window = false;
+        }
+    });
+    if !open {
+        app.cloud_save_window = false;
+    }
+}
+
 impl CloudApp for SolveApp {
     fn cloud(&self) -> &CloudFiles {
         &self.cloud
@@ -165,6 +267,10 @@ impl CloudApp for SolveApp {
 
     fn drop_pending(&mut self, uid: u64) {
         self.cloud_sent.remove(&uid);
+    }
+
+    fn go_to_save_as(&mut self) {
+        self.cloud_save_window = true;
     }
 
     fn ready_to_save(&mut self) -> bool {

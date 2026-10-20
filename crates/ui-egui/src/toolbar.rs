@@ -395,16 +395,22 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let span = Rect::from_min_max(pos2(x, report.top()), pos2(report.left() - 6.0, report.bottom()));
         let update = crate::update::button(app, ui, span, report_label);
         let mut tabs_end = update.map_or(report.left(), |u| u.left()) - 8.0;
-        // The account badge, when a cloud service is configured: right of the
-        // tabs, in the corner every office suite keeps it. A narrow bar drops
-        // it before it covers the tabs.
+        // The account badge and the Share button, when a cloud service is
+        // configured: right of the tabs, in the corner every office suite
+        // keeps them, and in that order because this strip runs right to left.
+        // A narrow bar drops them before they cover the tabs. The Share split
+        // button carries Work together too, when the account allows it.
         if crate::cloud::available(app) && !compact_actions && tabs_end - tabs_start > 420.0 {
-            let badge = Rect::from_min_max(pos2(tabs_end - 170.0, r.top()), pos2(tabs_end, r.bottom()));
-            let mut badge_ui = ui.new_child(egui::UiBuilder::new().max_rect(badge).layout(egui::Layout::right_to_left(egui::Align::Center)));
-            badge_ui.set_clip_rect(badge.intersect(ui.clip_rect()));
-            crate::cloud::who(app, &mut badge_ui);
-            crate::scenario::publish_rect("titlebar:account", badge);
-            tabs_end = badge.left() - 8.0;
+            let strip = Rect::from_min_max(pos2(tabs_end - 250.0, r.top()), pos2(tabs_end, r.bottom()));
+            let mut strip_ui = ui.new_child(egui::UiBuilder::new().max_rect(strip).layout(egui::Layout::right_to_left(egui::Align::Center)));
+            strip_ui.set_clip_rect(strip.intersect(ui.clip_rect()));
+            crate::cloud::who(app, &mut strip_ui);
+            if crate::cloud::shares(app) {
+                strip_ui.add_space(8.0);
+                let _ = crate::cloud::share_button(app, &mut strip_ui, &crate::cloud::copies());
+            }
+            crate::scenario::publish_rect("titlebar:account", strip);
+            tabs_end = strip.left() - 8.0;
         }
         // Narrow title bars can fit only part of the tab strip. Its hit regions must not
         // extend into the persistent report and window controls.
@@ -426,22 +432,8 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         if response.on_hover_text(crate::i18n::tr_label("Report a bug — review a screenshot and open a GitHub draft")).clicked() {
             crate::help::run(app, &ui.ctx().clone(), "report");
         }
-        // Preferences, at the top right (also Ctrl+,).
-        let gear = Rect::from_center_size(pos2(r.right() - captions - 70.0, r.center().y), vec2(24.0, 24.0));
-        let gresp = ui.interact(gear, ui.id().with("sc_prefs_button"), Sense::click());
-        if gresp.hovered() {
-            ui.painter().rect_filled(gear, 4.0, Color32::from_white_alpha(30));
-        }
-        icons::paint_on(ui.painter(), gear.shrink(4.0), "settings", Some(true), 1.0);
-        crate::scenario::publish_handle("titlebar:preferences", gear.center());
-        let prefs_tip = if cfg!(target_os = "macos") {
-            format!("{} (Cmd+,)", app.tr("ui.preferences"))
-        } else {
-            format!("{} (Ctrl+,)", app.tr("ui.preferences"))
-        };
-        if gresp.on_hover_text(prefs_tip).clicked() {
-            crate::prefs::open_at(app, 0);
-        }
+        // Preferences is not a bar button. It lives in the File menu and on
+        // Ctrl+,. A second control for it here only duplicated the File entry.
         ui.painter().text(
             pos2(r.right() - 12.0 - captions, r.center().y),
             Align2::RIGHT_CENTER,
@@ -1636,7 +1628,8 @@ mod header_report_tests {
         assert!(at("appbar:file") < at("appbar:undo") && at("appbar:undo") < at("appbar:redo"));
         assert!(at("appbar:redo") < at("tab:home") && at("tab:home") < at("tab:design:0"));
         assert!((at("tab:design:0") as f64) < report && report < at("appbar:help") as f64);
-        assert!(at("appbar:help") < at("titlebar:preferences"));
+        // Preferences is no longer a bar button; it lives in the File menu.
+        assert!(crate::scenario::handle_at("titlebar:preferences").is_none(), "no Preferences gear in the title bar");
         h.step(&json!({"click":{"handle":"appbar:help"}})).unwrap();
         assert!(h.app.help.menu, "? opens the Help menu");
         h.step(&json!({"key":"Escape"})).unwrap();
@@ -2050,13 +2043,12 @@ mod fill_width_tests {
                         assert!(r.right() < ai.left(), "{at}: the {t} tab runs into the AI button");
                     }
                 }
-                // The title bar: its document tabs end before Report a bug, Help and Preferences.
+                // The title bar: its document tabs end before Report a bug and Help.
                 let report = crate::scenario::rect_of("titlebar:report").unwrap();
                 let tabs_end = crate::scenario::handles("tab:").iter().map(|(_, p)| p.x).fold(0.0, f32::max);
                 assert!(tabs_end < report.left(), "{at}: the document tabs run into Report a bug");
                 let help = crate::scenario::handle_at("appbar:help").unwrap();
-                let prefs = crate::scenario::handle_at("titlebar:preferences").unwrap();
-                assert!(report.right() < help.x && help.x < prefs.x, "{at}: the title bar's right-hand controls overlap");
+                assert!(report.right() < help.x, "{at}: the title bar's right-hand controls overlap");
             }
         }
     }

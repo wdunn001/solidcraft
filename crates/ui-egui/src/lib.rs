@@ -365,6 +365,9 @@ pub struct Services {
     pub agent_http: Option<agent_chat::backend::HttpFn>,
     /// The system keychain, for API agents' keys; None: keys can't be stored.
     pub secrets: Option<std::sync::Arc<dyn agent_chat::backend::Secrets>>,
+    /// Open a URL in the system browser (the cloud sign-in link); None: the
+    /// link is only shown, never followed.
+    pub open_url: Option<Box<dyn Fn(&str)>>,
 }
 
 pub struct SolveApp {
@@ -380,6 +383,14 @@ pub struct SolveApp {
     /// restores it.
     pub pre_sketch_marker: Option<Option<usize>>,
     pub services: Services,
+    /// Cloud Open/Save state; the pages are `craft_ui::cloud` (see `cloud`).
+    pub cloud: cloud::CloudFiles,
+    /// The design snapshot each cloud save in flight encoded ([`cloud::Sent`]).
+    pub(crate) cloud_sent: cloud::Sent,
+    /// The Share dialog the cloud pages draw.
+    pub share: craft_ui::share::ShareDialog,
+    /// Who else is in the design, when shared editing is connected.
+    pub presence: craft_ui::presence::PresenceBar,
     file_picker: Option<file_picker::Pending>,
     /// A Save or Save As being written on a worker (see [`save_job`]).
     saving: Option<save_job::Saving>,
@@ -550,6 +561,10 @@ impl SolveApp {
             now: 0.0,
             pre_sketch_marker: None,
             services,
+            cloud: cloud::CloudFiles::new(),
+            cloud_sent: cloud::Sent::new(),
+            share: craft_ui::share::ShareDialog::new(),
+            presence: craft_ui::presence::PresenceBar::new().badges_only(),
             file_picker: None,
             saving: None,
             viewport: viewport::ViewportState::default(),

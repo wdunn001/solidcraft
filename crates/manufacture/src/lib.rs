@@ -22,6 +22,8 @@ pub mod additive;
 pub mod job;
 pub mod library;
 pub mod machine_host;
+pub mod machines;
+pub mod post;
 pub mod simulate;
 
 use std::collections::BTreeMap;

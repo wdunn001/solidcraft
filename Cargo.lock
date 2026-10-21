@@ -4246,6 +4246,7 @@ dependencies = [
  "solidcraft-geom",
  "solidcraft-io",
  "solidcraft-kernel",
+ "solidcraft-laser",
  "solidcraft-manufacture",
  "solidcraft-render",
  "solidcraft-sketch",
@@ -4320,6 +4321,15 @@ dependencies = [
  "truck-stepio",
  "truck-topology",
  "web-time",
+]
+
+[[package]]
+name = "solidcraft-laser"
+version = "0.18.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

@@ -453,6 +453,15 @@ impl Session {
         self.machine_host = machine_host;
     }
 
+    /// Install or clear the OEM machine plugin for this session (not persisted).
+    pub fn set_machine_host(&mut self, host: Option<solidcraft_manufacture::machine_host::MachineHost>) {
+        self.machine_host = host;
+    }
+
+    pub fn machine_host(&self) -> Option<&solidcraft_manufacture::machine_host::MachineHost> {
+        self.machine_host.as_ref()
+    }
+
     /// The design has changes not in its file: in the document, or in what is hidden.
     pub fn is_dirty(&self) -> bool {
         (!Arc::ptr_eq(&self.doc, &self.saved) && *self.doc != *self.saved) || self.visibility != self.saved_visibility

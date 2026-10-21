@@ -19,12 +19,16 @@
 #![forbid(unsafe_code)]
 
 pub mod additive;
+pub mod focas;
 pub mod job;
 pub mod library;
 pub mod machine_host;
 pub mod machines;
+pub mod mtconnect;
 pub mod post;
+pub mod probe;
 pub mod simulate;
+pub mod thinc;
 
 use std::collections::BTreeMap;
 

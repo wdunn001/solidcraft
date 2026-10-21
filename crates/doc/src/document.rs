@@ -2409,6 +2409,9 @@ pub struct Document {
     /// Plastic rules.
     #[serde(default, skip_serializing_if = "crate::plastic::PlasticSettings::is_empty")]
     pub plastic: crate::plastic::PlasticSettings,
+    /// CAM setups: tools and 2D milling operations (toolpaths are not stored).
+    #[serde(default, skip_serializing_if = "crate::cam::CamSettings::is_empty")]
+    pub cam: crate::cam::CamSettings,
     /// CNC manufacture setups, machine and post profiles.
     #[serde(default, skip_serializing_if = "solidcraft_manufacture::ManufactureSettings::is_empty")]
     pub manufacture: solidcraft_manufacture::ManufactureSettings,
@@ -2621,6 +2624,7 @@ impl Document {
             assembly: Default::default(),
             sheet: Default::default(),
             plastic: Default::default(),
+            cam: Default::default(),
             manufacture: Default::default(),
             configs: Default::default(),
             parts: Default::default(),

@@ -14,10 +14,10 @@ solidcraft-engine = { workspace = true }
 # (craft_ui::cloud, behind the `cloud` feature). The interface half opens no
 # socket, so this builds for the web. The host application supplies the
 # backend that reaches the service, as it already supplies the file pickers.
-craft-ui = { git = "https://github.com/wdunn001/craft-libs", rev = "461b6e4fb29dc2d81aab7958f61988d8d383390c", features = ["cloud"] }
+craft-ui = { git = "https://github.com/wdunn001/craft-libs", rev = "0e9d4a61affd665b2e00d5e107cfe4a88ad15df5", features = ["cloud"] }
 # The cloud contracts the pages speak (entries, destinations, faults). No
 # vendor, no IO.
-craft-cloud = { git = "https://github.com/wdunn001/craft-libs", rev = "461b6e4fb29dc2d81aab7958f61988d8d383390c" }
+craft-cloud = { git = "https://github.com/wdunn001/craft-libs", rev = "0e9d4a61affd665b2e00d5e107cfe4a88ad15df5" }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
 solidcraft-gpu = { workspace = true }

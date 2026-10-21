@@ -90,14 +90,6 @@ impl Service {
                 let answer = self.client.conversation(&id).await.map_err(fault);
                 post(Event::Conversation(answer));
             }
-            Job::Messages { id, after } => {
-                let answer = self.client.messages(&id, after.as_deref()).await.map_err(fault);
-                post(Event::Messages(answer));
-            }
-            Job::PostMessage { id, text } => {
-                let answer = self.client.post_message(&id, &text).await.map_err(fault);
-                post(Event::Posted(answer));
-            }
         }
     }
 

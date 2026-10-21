@@ -1464,17 +1464,6 @@ impl SolveApp {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
-        // The cloud chat for the open document, when one is on screen. The thin
-        // UI hosts it as a side panel; a host that supersedes this chrome draws
-        // it from its own wrapper instead.
-        if cloud::chat_open(self) {
-            let t = theme::Tokens::get();
-            egui::Panel::right("sc_cloud_chat")
-                .exact_size(300.0)
-                .resizable(false)
-                .frame(egui::Frame::NONE.fill(t.panel).inner_margin(egui::Margin::symmetric(8, 8)))
-                .show(ui, |ui| cloud::chat_panel(self, ui));
-        }
         // A floating browser keeps the workspace the whole width: it is drawn over the view below.
         let browser_float = self.ui.show_browser && self.preferences.browser_float;
         if self.ui.show_browser && !browser_float {

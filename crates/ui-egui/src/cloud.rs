@@ -192,14 +192,13 @@ pub fn save_window(app: &mut SolveApp, ctx: &egui::Context) {
     if !app.cloud_save_window {
         return;
     }
-    let mut open = true;
-    let title = SolveApp::tr(app, "Save to Cloud").to_owned();
-    crate::frame::window(ctx, title, crate::frame::Width::Wide).id(egui::Id::new("sc_cloud_save")).open(&mut open).resizable(true).show(ctx, |ui| {
+    let title = SolveApp::tr(app, "Save to Cloud");
+    let closed = crate::ui_kit::Window::new(egui::Id::new("sc_cloud_save"), "save", title).show_body(ctx, |ui| {
         if save_page(app, ui) {
             app.cloud_save_window = false;
         }
     });
-    if !open {
+    if closed {
         app.cloud_save_window = false;
     }
 }

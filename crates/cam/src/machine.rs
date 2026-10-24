@@ -2,7 +2,8 @@
 //!
 //! Profiles are planning metadata (ATC, probe, integration port). Live I/O lives behind
 //! [`MachineBackend`]. Tests use [`FakeMachineHost`]; the shop floor uses MTConnect (fixture
-//! XML or loopback HTTP). FOCAS and THINC stay listed as planned.
+//! XML or loopback HTTP). Fanuc FOCAS and Okuma THINC register as unavailable stubs until
+//! their SDKs are linked.
 
 use std::sync::Arc;
 

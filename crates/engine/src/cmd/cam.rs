@@ -5,9 +5,9 @@
 
 use serde_json::{Value, json};
 use solidcraft_cam::{
-    ContourParams, Cut, Feeds, Heights, MachineHost, MtConnectBackend, Operation, PocketParams, Post, ProbeCycle, ProbeMacroStyle,
-    ProbeSnippetRequest, Program, Side, Tool, ToolKind, contour, emit, emit_snippet, pocket, preset_machines, readback, sample_haas_current_xml,
-    style_for_post,
+    ContourParams, Cut, Feeds, FocasBackend, Heights, MachineHost, MtConnectBackend, Operation, PocketParams, Post, ProbeCycle, ProbeMacroStyle,
+    ProbeSnippetRequest, Program, Side, ThincBackend, Tool, ToolKind, contour, emit, emit_snippet, pocket, preset_machines, readback,
+    sample_haas_current_xml, style_for_post,
 };
 use solidcraft_doc::cam::{
     CamContourParams, CamCut, CamFaceRef, CamGeometry, CamOperation, CamPocketParams, CamSettings, CamSetup, CamSide, MAX_OPS, MAX_SETUPS, MAX_TOOLS,
@@ -66,10 +66,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .at("MANUFACTURE", "MACHINE")
         .icon("list")
         .noundo()
-        .params("→ plugins (none, fake, mtconnect) and the active descriptor"),
+        .params("→ plugins (none, fake, mtconnect, focas, thinc) and the active descriptor"),
     CommandSpec::new("cam.machine.use", "Use Machine Plugin", machine_use_cmd).at("MANUFACTURE", "MACHINE").icon("settings").noundo().params(
-        "plugin: none|fake|mtconnect; endpoint?: http://127.0.0.1:8082/VF-2 (loopback); \
-             fixture?: bool (default true in the browser) → descriptor",
+        "plugin: none|fake|mtconnect|focas|thinc; endpoint?: http://127.0.0.1:8082/VF-2 (mtconnect) \
+             or 127.0.0.1:8193 (focas) / :5000 (thinc); fixture?: bool (mtconnect, default true in the browser) → descriptor",
     ),
     CommandSpec::new("cam.machine.status", "Machine Status", machine_status_cmd)
         .at("MANUFACTURE", "MACHINE")
@@ -742,8 +742,9 @@ fn machine_plugins_cmd(s: &mut Session, _p: &Value) -> Result<Value> {
             {"id": "none", "protocol": "none", "note": "no shop-floor plugin"},
             {"id": "fake", "protocol": "fake", "note": "deterministic status for wiring tests"},
             {"id": "mtconnect", "protocol": "mtconnect", "note": "read-only /current; live HTTP is loopback-only, fixture XML otherwise"},
+            {"id": "focas", "protocol": "focas", "note": "Fanuc FOCAS stub; SDK not linked"},
+            {"id": "thinc", "protocol": "thinc", "note": "Okuma THINC stub; API not linked"},
         ],
-        "planned": ["focas", "thinc"],
         "active": s.machine.as_ref().map(|h| h.descriptor()),
     }))
 }
@@ -776,7 +777,21 @@ fn machine_use_cmd(s: &mut Session, p: &Value) -> Result<Value> {
             s.machine = Some(host);
             Ok(json!({"plugin": "mtconnect", "endpoint": endpoint, "fixture": fixture, "descriptor": descriptor}))
         }
-        other => Err(bad(cmd, format!("unknown plugin `{other}` (none, fake, mtconnect)"))),
+        "focas" => {
+            let endpoint = str_(p, "endpoint").unwrap_or("127.0.0.1:8193").to_string();
+            let host = MachineHost::new(FocasBackend::new(endpoint.clone()));
+            let descriptor = host.descriptor();
+            s.machine = Some(host);
+            Ok(json!({"plugin": "focas", "endpoint": endpoint, "descriptor": descriptor}))
+        }
+        "thinc" => {
+            let endpoint = str_(p, "endpoint").unwrap_or("127.0.0.1:5000").to_string();
+            let host = MachineHost::new(ThincBackend::new(endpoint.clone()));
+            let descriptor = host.descriptor();
+            s.machine = Some(host);
+            Ok(json!({"plugin": "thinc", "endpoint": endpoint, "descriptor": descriptor}))
+        }
+        other => Err(bad(cmd, format!("unknown plugin `{other}` (none, fake, mtconnect, focas, thinc)"))),
     }
 }
 
@@ -1058,6 +1073,12 @@ mod tests {
         assert_eq!(haas["profile"]["integration"]["kind"], "mt_connect");
         assert_eq!(haas["profile"]["integration"]["default_port"], 8082);
         assert_eq!(haas["profile"]["probe"]["style"], "haas_inspection_plus");
+        let fanuc = machines.iter().find(|m| m["id"] == "Fanuc 0i-MF").unwrap();
+        assert_eq!(fanuc["profile"]["integration"]["kind"], "focas");
+        assert_eq!(fanuc["profile"]["integration"]["default_port"], 8193);
+        let okuma = machines.iter().find(|m| m["id"] == "Okuma GENOS M560").unwrap();
+        assert_eq!(okuma["profile"]["integration"]["kind"], "thinc");
+        assert_eq!(okuma["profile"]["integration"]["default_port"], 5000);
     }
 
     #[test]
@@ -1074,6 +1095,34 @@ mod tests {
         assert_eq!(plugins["active"]["id"], "mtconnect");
         run(&mut s, "cam.machine.use", json!({"plugin": "none"}));
         assert!(run(&mut s, "cam.machine.plugins", json!({}))["active"].is_null());
+    }
+
+    #[test]
+    fn focas_and_thinc_stubs_register_unavailable() {
+        let mut s = Session::default();
+        let plugins = run(&mut s, "cam.machine.plugins", json!({}));
+        let ids: Vec<&str> = plugins["plugins"].as_array().unwrap().iter().filter_map(|p| p["id"].as_str()).collect();
+        assert!(ids.contains(&"focas"));
+        assert!(ids.contains(&"thinc"));
+        assert!(plugins.get("planned").is_none() || plugins["planned"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+
+        let focas = run(&mut s, "cam.machine.use", json!({"plugin": "focas"}));
+        assert_eq!(focas["plugin"], "focas");
+        assert_eq!(focas["descriptor"]["protocol"], "focas");
+        assert_eq!(focas["descriptor"]["availability"], "unavailable");
+        assert_eq!(focas["endpoint"], "127.0.0.1:8193");
+        let st = run(&mut s, "cam.machine.status", json!({}));
+        assert_eq!(st["source"], "focas");
+        assert_eq!(st["execution"], "UNAVAILABLE");
+        assert_eq!(st["available"], false);
+
+        let thinc = run(&mut s, "cam.machine.use", json!({"plugin": "thinc"}));
+        assert_eq!(thinc["plugin"], "thinc");
+        assert_eq!(thinc["descriptor"]["protocol"], "thinc");
+        assert_eq!(thinc["endpoint"], "127.0.0.1:5000");
+        let st = run(&mut s, "cam.machine.status", json!({}));
+        assert_eq!(st["source"], "thinc");
+        assert_eq!(st["available"], false);
     }
 
     #[test]

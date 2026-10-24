@@ -16,7 +16,7 @@ use crate::{EngineError, Result, Session};
 pub const COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("laser.profiles", "Laser Profiles", profiles).at("MANUFACTURE", "LASER").icon("list").noundo().doc_only().params("{}"),
     CommandSpec::new("laser.exportPackage", "Export LightBurn Package", export_package).at("MANUFACTURE", "LASER").icon("export").noundo().params(
-        "profile?: commarker-60w-mopa; field_mm?: number; path?: stem or path without extension \
+        "profile?: commarker-b6; field_mm?: number; path?: stem or path without extension \
 (writes .dxf .svg .laser-job.json); sketch?: name|id; polylines?: [{points:[[x,y],…], closed?, layer?}]",
     ),
 ];
@@ -35,6 +35,9 @@ fn profiles(s: &mut Session, p: &Value) -> Result<Value> {
                 "field_options_mm": pr.field_options_mm,
                 "lightburn_device": pr.lightburn_device,
                 "lightburn_model": pr.lightburn_model,
+                "controller": pr.id.controller(),
+                "gcode_flavor": pr.id.controller().gcode_flavor(),
+                "lasercraft_id": pr.id.lasercraft_id(),
                 "source": pr.source,
                 "notes": pr.notes,
             })
@@ -47,7 +50,7 @@ fn export_package(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "laser.exportPackage";
     let profile_id = match str_(p, "profile") {
         Some(raw) if !raw.trim().is_empty() => ProfileId::parse(raw).ok_or_else(|| bad(CMD, format!("unknown laser profile `{raw}`")))?,
-        _ => ProfileId::Commarker60wMopa,
+        _ => ProfileId::CommarkerB6,
     };
     let field_mm = p.get("field_mm").and_then(Value::as_f64);
     let polylines =
@@ -190,6 +193,10 @@ mod tests {
         let out = s.execute("laser.profiles", &json!({})).unwrap();
         let ids: Vec<&str> = out["profiles"].as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap()).collect();
         assert!(ids.contains(&"commarker-60w-mopa"));
+        assert!(ids.contains(&"commarker-b6"));
+        let b6 = out["profiles"].as_array().unwrap().iter().find(|p| p["id"] == "commarker-b6").unwrap();
+        assert_eq!(b6["controller"], "EzCad2");
+        assert_eq!(b6["lasercraft_id"], "commarker-b6");
     }
 
     #[test]
@@ -199,8 +206,10 @@ mod tests {
         s.execute("sketch.rectangle.two_point", &json!({"p0": [0, 0], "p1": [30, 20]})).unwrap();
         let out = s.execute("laser.exportPackage", &json!({"profile": "commarker-60w-mopa", "field_mm": 110.0})).unwrap();
         assert_eq!(out["profile"], "commarker-60w-mopa");
-        assert!(out["dxf"].as_str().unwrap().contains("LINE"));
+        assert!(out["dxf"].as_str().unwrap().contains("POLYLINE"));
+        assert!(out["dxf"].as_str().unwrap().contains("VERTEX"));
         assert!(out["job"].as_str().unwrap().contains("JCZFiber"));
+        assert!(out["job"].as_str().unwrap().contains("EzCad2"));
     }
 
     #[test]
@@ -221,5 +230,7 @@ mod tests {
         assert!(out["polylines"].as_u64().unwrap() >= 1);
         let job: serde_json::Value = serde_json::from_str(out["job"].as_str().unwrap()).unwrap();
         assert_eq!(job["layers"][0]["intent"], "engrave");
+        assert_eq!(job["lasercraft"]["id"], "commarker-b6");
+        assert_eq!(job["lasercraft"]["controller"], "EzCad2");
     }
 }

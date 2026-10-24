@@ -1,8 +1,12 @@
-//! LightBurn handoff package: ASCII DXF (+ optional SVG) and `laser-job.json`.
+//! LightBurn / LaserCraft handoff package: ASCII DXF (+ optional SVG) and `laser-job.json`.
+//!
+//! DXF is R12 POLYLINE/VERTEX/SEQEND (LaserCraft's reader, and the widest CAD
+//! import). The job JSON carries a `lasercraft` sidecar shaped like LaserCraft's
+//! DeviceProfile so that app can take the same file.
 
 use serde::{Deserialize, Serialize};
 
-use crate::profile::{LaserProfile, ProfileId, profile};
+use crate::profile::{Controller, LaserProfile, ProfileId, profile};
 use crate::{Result, invalid};
 
 /// One open or closed polyline in millimetres (field XY).
@@ -28,6 +32,8 @@ pub enum LaserLayer {
     Mark,
     Engrave,
     Deep,
+    Cut,
+    Score,
 }
 
 impl LaserLayer {
@@ -36,6 +42,8 @@ impl LaserLayer {
             LaserLayer::Mark => "mark",
             LaserLayer::Engrave => "engrave",
             LaserLayer::Deep => "deep",
+            LaserLayer::Cut => "cut",
+            LaserLayer::Score => "score",
         }
     }
 }
@@ -56,6 +64,31 @@ pub struct LaserJobMeta {
     pub layers: Vec<LayerMeta>,
     pub notes: String,
     pub generator: &'static str,
+    /// LaserCraft DeviceProfile-shaped subset so that app can load the same job.
+    pub lasercraft: LaserCraftHandoff,
+}
+
+/// Fields LaserCraft's `DeviceProfile` already knows how to read.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LaserCraftHandoff {
+    pub id: String,
+    pub display_name: String,
+    pub controller: Controller,
+    pub work_area_mm: [f64; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gcode_flavor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub galvo: Option<GalvoHandoff>,
+}
+
+/// Galvo field hint only (no USB, no list bytes). LaserCraft fills the rest.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GalvoHandoff {
+    pub field_width_mm: f64,
+    pub field_height_mm: f64,
+    pub resolution_bits: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correction_file: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -122,6 +155,13 @@ fn job_meta(pref: &LaserProfile, width: f64, height: f64, polylines: &[Polyline2
             layers.push((pl.layer.clone(), 1));
         }
     }
+    let controller = pref.id.controller();
+    let galvo = controller.is_galvo().then_some(GalvoHandoff {
+        field_width_mm: width,
+        field_height_mm: height,
+        resolution_bits: 16,
+        correction_file: pref.id.correction_file().map(str::to_string),
+    });
     LaserJobMeta {
         profile: pref.id.as_str().into(),
         profile_name: pref.name.clone(),
@@ -135,18 +175,31 @@ fn job_meta(pref: &LaserProfile, width: f64, height: f64, polylines: &[Polyline2
         layers: layers.into_iter().map(|(name, polylines)| LayerMeta { intent: intent_for_layer(&name).as_str().into(), name, polylines }).collect(),
         notes: pref.notes.clone(),
         generator: "solidcraft-laser",
+        lasercraft: LaserCraftHandoff {
+            id: pref.id.lasercraft_id().unwrap_or(pref.id.as_str()).into(),
+            display_name: pref.name.clone(),
+            controller,
+            work_area_mm: [width, height],
+            gcode_flavor: controller.gcode_flavor().map(str::to_string),
+            galvo,
+        },
     }
 }
 
 fn intent_for_layer(name: &str) -> LaserLayer {
     match name.to_ascii_lowercase().as_str() {
         "engrave" | "engraving" => LaserLayer::Engrave,
-        "deep" | "cut" => LaserLayer::Deep,
+        "cut" => LaserLayer::Cut,
+        "score" => LaserLayer::Score,
+        "deep" => LaserLayer::Deep,
         _ => LaserLayer::Mark,
     }
 }
 
-/// Minimal AutoCAD R12 ASCII DXF (LINE entities), millimetres, centred on the bed.
+/// AutoCAD R12 ASCII DXF, millimetres. Each shape is a POLYLINE + VERTEX + SEQEND
+/// (group 66 = vertices follow). No subclass markers, so LaserCraft's reader and
+/// LightBurn both import it. Closed polylines set flag 1 and do not repeat the first
+/// point as a last vertex.
 pub fn write_ascii_dxf(polylines: &[Polyline2], width_mm: f64, height_mm: f64) -> Result<String> {
     let hx = width_mm * 0.5;
     let hy = height_mm * 0.5;
@@ -179,15 +232,24 @@ pub fn write_ascii_dxf(polylines: &[Polyline2], width_mm: f64, height_mm: f64) -
     }
     out.push_str("0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n");
     for pl in polylines {
-        let n = pl.points.len();
-        let segs = if pl.closed { n } else { n.saturating_sub(1) };
-        for i in 0..segs {
-            let a = pl.points[i];
-            let b = pl.points[(i + 1) % n];
-            out.push_str("0\nLINE\n8\n");
-            out.push_str(&pl.layer);
-            out.push_str(&format!("\n10\n{:.6}\n20\n{:.6}\n30\n0.0\n11\n{:.6}\n21\n{:.6}\n31\n0.0\n", a[0], a[1], b[0], b[1]));
+        let mut points = pl.points.as_slice();
+        if pl.closed && points.len() >= 2 {
+            let first = points[0];
+            let last = points[points.len() - 1];
+            if (first[0] - last[0]).abs() < 1e-9 && (first[1] - last[1]).abs() < 1e-9 {
+                points = &points[..points.len() - 1];
+            }
         }
+        if points.len() < 2 {
+            continue;
+        }
+        let layer = if pl.layer.is_empty() { "0" } else { pl.layer.as_str() };
+        let flag = if pl.closed { 1 } else { 0 };
+        out.push_str(&format!("0\nPOLYLINE\n8\n{layer}\n66\n1\n70\n{flag}\n"));
+        for p in points {
+            out.push_str(&format!("0\nVERTEX\n8\n{layer}\n10\n{:.6}\n20\n{:.6}\n30\n0.0\n", p[0], p[1]));
+        }
+        out.push_str("0\nSEQEND\n");
     }
     out.push_str("0\nENDSEC\n0\nEOF\n");
     Ok(out)
@@ -255,7 +317,10 @@ mod tests {
     #[test]
     fn package_contains_dxf_entities_and_job_json() {
         let pkg = build_package(ProfileId::Commarker60wMopa, Some(110.0), &square()).unwrap();
-        assert!(pkg.dxf.contains("LINE"));
+        assert!(pkg.dxf.contains("POLYLINE"));
+        assert!(pkg.dxf.contains("VERTEX"));
+        assert!(pkg.dxf.contains("SEQEND"));
+        assert!(!pkg.dxf.contains("\nLINE\n"));
         assert!(pkg.dxf.contains("AC1009"));
         assert!(pkg.svg.contains("<svg"));
         let v: serde_json::Value = serde_json::from_str(&pkg.job_json).unwrap();
@@ -264,6 +329,8 @@ mod tests {
         assert_eq!(v["bed_height_mm"], 110.0);
         assert_eq!(v["lightburn_device"], "JCZFiber");
         assert_eq!(v["lightburn_model"], "B6 MOPA");
+        assert_eq!(v["lasercraft"]["controller"], "EzCad2");
+        assert_eq!(v["lasercraft"]["galvo"]["correction_file"], "jcz15.cor");
     }
 
     #[test]
@@ -281,9 +348,32 @@ mod tests {
     }
 
     #[test]
-    fn golden_dxf_has_four_sides_for_closed_square() {
+    fn golden_dxf_has_one_closed_polyline_for_square() {
         let dxf = write_ascii_dxf(&square(), 110.0, 110.0).unwrap();
-        let lines = dxf.matches("\nLINE\n").count();
-        assert_eq!(lines, 4);
+        assert_eq!(dxf.matches("\nPOLYLINE\n").count(), 1);
+        assert_eq!(dxf.matches("\nVERTEX\n").count(), 4);
+        assert_eq!(dxf.matches("\nSEQEND\n").count(), 1);
+        assert!(dxf.contains("70\n1\n"));
+    }
+
+    #[test]
+    fn commarker_b6_job_uses_lasercraft_id_and_ezcad2() {
+        let pkg = build_package(ProfileId::CommarkerB6, None, &square()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&pkg.job_json).unwrap();
+        assert_eq!(v["lasercraft"]["id"], "commarker-b6");
+        assert_eq!(v["lasercraft"]["controller"], "EzCad2");
+        assert_eq!(v["lasercraft"]["work_area_mm"][0], 150.0);
+        assert_eq!(v["lasercraft"]["work_area_mm"][1], 150.0);
+    }
+
+    #[test]
+    fn snapmaker_job_uses_lasercraft_controller_and_marlin_flavor() {
+        let pkg = build_package(ProfileId::SnapmakerArtisan, None, &square()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&pkg.job_json).unwrap();
+        assert_eq!(v["lasercraft"]["id"], "snapmaker");
+        assert_eq!(v["lasercraft"]["controller"], "SnapMaker");
+        assert_eq!(v["lasercraft"]["gcode_flavor"], "marlin");
+        assert_eq!(v["bed_width_mm"], 400.0);
+        assert!(v["lasercraft"]["galvo"].is_null());
     }
 }

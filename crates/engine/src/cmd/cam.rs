@@ -30,7 +30,8 @@ pub static COMMANDS: &[CommandSpec] = &[
     ),
     CommandSpec::new("cam.tool.remove", "Remove Tool", tool_remove).at("MANUFACTURE", "TOOLS").icon("delete").params("number"),
     CommandSpec::new("cam.setup", "CAM Setup", setup_cmd).at("MANUFACTURE", "SETUP").icon("settings").params(
-        "name; work_offset?: 1…6 (G54…G59, default 1); tool_axis?: [x,y,z] (programmed +Z, default [0,0,1]); \
+        "name?: Setup 1, Setup 2, … when omitted; work_offset?: 1…6 (G54…G59, default 1); \
+         tool_axis?: [x,y,z] (programmed +Z, default [0,0,1]); \
          x_axis?: [x,y,z] (programmed +X, square to the tool axis; omitted, derived); \
          work_origin?: [x,y,z] mm part zero in the model (default [0,0,0]); \
          stock?: {min:[x,y,z], max:[x,y,z]}; delete?: bool",
@@ -143,8 +144,9 @@ fn tool_remove(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn setup_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "cam.setup";
-    let name = str_(p, "name").map(str::trim).filter(|n| !n.is_empty() && n.len() <= 128).ok_or_else(|| bad(cmd, "`name` is required"))?.to_string();
+    let named = str_(p, "name").map(str::trim).filter(|n| !n.is_empty() && n.len() <= 128).map(str::to_string);
     if bool_(p, "delete").unwrap_or(false) {
+        let name = named.ok_or_else(|| bad(cmd, "`name` is required to delete a setup"))?;
         let doc = s.doc_mut();
         let before = doc.cam.setups.len();
         doc.cam.setups.retain(|x| x.name != name);
@@ -153,6 +155,7 @@ fn setup_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return Ok(json!({"deleted": name}));
     }
+    let name = named.unwrap_or_else(|| s.doc.cam.unused_setup_name());
     let existing = s.doc.cam.setup(&name).cloned();
     let work_offset = num(p, "work_offset").map_or(existing.as_ref().map(|e| e.work_offset).unwrap_or(1), |n| n as u8);
     let tool_axis = match p.get("tool_axis") {
@@ -984,6 +987,15 @@ mod tests {
         run(&mut s, "cam.setup", json!({"name": "A"}));
         assert!(s.execute("cam.post", &json!({"setup": "A"})).is_err());
         assert!(s.execute("cam.op.remove", &json!({"setup": "A", "name": "missing"})).is_err());
+    }
+
+    #[test]
+    fn setup_without_name_uses_setup_n() {
+        let mut s = Session::default();
+        assert_eq!(run(&mut s, "cam.setup", json!({}))["setup"]["name"], "Setup 1");
+        assert_eq!(run(&mut s, "cam.setup", json!({}))["setup"]["name"], "Setup 2");
+        assert_eq!(s.doc.cam.setups.len(), 2);
+        assert!(s.execute("cam.setup", &json!({"delete": true})).is_err());
     }
 
     #[test]

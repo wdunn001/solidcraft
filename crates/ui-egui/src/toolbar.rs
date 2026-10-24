@@ -681,11 +681,11 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 if crate::cloud::available(app) {
                     ui.separator();
-                    if item(ui, &format!("{}…", app.tr_label("Open from Cloud")), "") {
+                    if item(ui, &format!("{}…", app.tr_label("Open from Cloud")), "", "open") {
                         let _ = app.run("cloud.open", json!({}));
                         close = true;
                     }
-                    if item_if(ui, &format!("{}…", app.tr_label("Save to Cloud")), "", shown) {
+                    if item_if(ui, &format!("{}…", app.tr_label("Save to Cloud")), "", "save", shown) {
                         app.cloud_save_window = true;
                         close = true;
                     }

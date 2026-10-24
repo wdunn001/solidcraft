@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use super::machine::{Availability, MachineBackend, MachineBackendDescriptor, MachineError, MachineHost, MachineLiveStatus, MachineResult};
+use super::machine::{Availability, MachineBackend, MachineBackendDescriptor, MachineError, MachineLiveStatus, MachineResult};
 
 /// Minimal HTTP GET used by [`MtConnectBackend`].
 pub trait HttpGet: Send + Sync + 'static {
@@ -194,6 +194,7 @@ pub fn sample_haas_current_xml() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::MachineHost;
 
     #[test]
     fn parses_sample_haas_xml() {

@@ -141,15 +141,39 @@ impl Post {
         }
     }
 
+    /// GRBL controllers: millimetres, no length offsets, `.nc`.
+    pub fn grbl() -> Post {
+        Post { name: "grbl".into(), extension: "nc".into(), tool_change: lines(&["T{tool}"]), footer: lines(&["M5", "M9", "M30"]), ..Post::rs274() }
+    }
+
+    /// Mach3: RS-274 motion with a `.tap` suffix.
+    pub fn mach3() -> Post {
+        Post { name: "mach3".into(), extension: "tap".into(), comments: CommentStyle::Semicolon, ..Post::rs274() }
+    }
+
+    /// Fanuc mill: two-digit words, `.nc`.
+    pub fn fanuc() -> Post {
+        Post { name: "fanuc".into(), extension: "nc".into(), two_digit_codes: true, ..Post::rs274() }
+    }
+
+    /// Haas mill: Fanuc-like words, `.nc`.
+    pub fn haas() -> Post {
+        Post { name: "haas".into(), extension: "nc".into(), two_digit_codes: true, ..Post::rs274() }
+    }
+
     /// The built-in post called `name`.
     pub fn builtin(name: &str) -> Option<Post> {
         match name.trim().to_ascii_lowercase().as_str() {
             "rs274" | "linuxcnc" => Some(Post::rs274()),
+            "grbl" => Some(Post::grbl()),
+            "mach3" => Some(Post::mach3()),
+            "fanuc" => Some(Post::fanuc()),
+            "haas" => Some(Post::haas()),
             _ => None,
         }
     }
 
-    pub const BUILTIN: &'static [&'static str] = &["rs274"];
+    pub const BUILTIN: &'static [&'static str] = &["rs274", "grbl", "mach3", "fanuc", "haas"];
 
     /// Whether the post writes the work offset (a `{work_offset}` in its header or tool change).
     pub fn writes_work_offset(&self) -> bool {

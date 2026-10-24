@@ -22,35 +22,35 @@ use crate::params::{bad, bool_, expr, num, req_expr, str_, vec2, vec2_list, vec3
 use crate::{Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("cam.tool.define", "Define Tool", tool_cmd).icon("hole").params(
+    CommandSpec::new("cam.tool.define", "Define Tool", tool_cmd).at("MANUFACTURE", "TOOLS").icon("hole").params(
         "number (1…9999); kind?: flat_endmill|ball_endmill|drill (default flat_endmill); diameter (mm); flute_length (mm); \
          description?; flutes?; spindle_rpm?; feed?; plunge_feed?; stepdown?; stepover?",
     ),
-    CommandSpec::new("cam.tool.remove", "Remove Tool", tool_remove).icon("delete").params("number"),
-    CommandSpec::new("cam.setup", "CAM Setup", setup_cmd).icon("settings").params(
+    CommandSpec::new("cam.tool.remove", "Remove Tool", tool_remove).at("MANUFACTURE", "TOOLS").icon("delete").params("number"),
+    CommandSpec::new("cam.setup", "CAM Setup", setup_cmd).at("MANUFACTURE", "SETUP").icon("settings").params(
         "name; work_offset?: 1…6 (G54…G59, default 1); tool_axis?: [x,y,z] (programmed +Z, default [0,0,1]); \
          x_axis?: [x,y,z] (programmed +X, square to the tool axis; omitted, derived); \
          work_origin?: [x,y,z] mm part zero in the model (default [0,0,0]); \
          stock?: {min:[x,y,z], max:[x,y,z]}; delete?: bool",
     ),
-    CommandSpec::new("cam.op.contour", "2D Contour", contour_cmd).icon("cut").params(
+    CommandSpec::new("cam.op.contour", "2D Contour", contour_cmd).at("MANUFACTURE", "2D").icon("cut").params(
         "setup; name; tool (number); sketch?: id or name, with profiles?: as solid.extrude; faces?: [{body, name, at?}]; \
          or outer: [[x,y],…] (or regions: [{outer, holes?}]); holes?: [[[x,y],…]]; \
          side?: outside|inside|on (default outside); climb?: bool (default true); stock_to_leave?; tolerance?; \
          ramp_angle?: deg (default 0); clearance?; retract?; top?; bottom (required unless cut given); stepdown?; \
          feed?; plunge_feed?; spindle_rpm?; coolant?",
     ),
-    CommandSpec::new("cam.op.pocket", "2D Pocket", pocket_cmd).icon("hole").params(
+    CommandSpec::new("cam.op.pocket", "2D Pocket", pocket_cmd).at("MANUFACTURE", "2D").icon("hole").params(
         "setup; name; tool (number); sketch?: id or name, with profiles?; faces?; or outer/regions; holes?; \
          stepover? (default half the tool diameter); climb?; stock_to_leave?; tolerance?; ramp_angle?: deg; \
          clearance?; retract?; top?; bottom; stepdown?; feed?; plunge_feed?; spindle_rpm?; coolant?",
     ),
-    CommandSpec::new("cam.op.remove", "Remove CAM Operation", delete_op).icon("delete").params("setup; name"),
-    CommandSpec::new("cam.post", "Post Process", post_cmd).icon("export").noundo().params(
+    CommandSpec::new("cam.op.remove", "Remove CAM Operation", delete_op).at("MANUFACTURE", "2D").icon("delete").params("setup; name"),
+    CommandSpec::new("cam.post", "Post Process", post_cmd).at("MANUFACTURE", "POST").icon("export").noundo().params(
         "setup; post?: rs274 | name of a saved post (default rs274); program?: name (default the setup's) → \
          {gcode, extension, post, operations, readback}. G-code is always read back and checked against the toolpaths.",
     ),
-    CommandSpec::new("cam.list", "List CAM", list_cmd).icon("list").noundo().params("→ tools, setups (with operations) and saved posts"),
+    CommandSpec::new("cam.list", "List CAM", list_cmd).at("MANUFACTURE", "POST").icon("list").noundo().params("→ tools, setups (with operations) and saved posts"),
 ];
 
 fn tool_cmd(s: &mut Session, p: &Value) -> Result<Value> {

@@ -261,6 +261,12 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "SHEET METAL", panel: "CONFIGURE", promoted: 2, ids: CONFIGURE },
     Section { tab: "RENDER", panel: "SCENE", promoted: 2, ids: &["render.scene"] },
     Section { tab: "RENDER", panel: "IMAGE", promoted: 1, ids: &["render.start"] },
+    Section { tab: "MANUFACTURE", panel: "SETUP", promoted: 1, ids: &["cam.setup"] },
+    Section { tab: "MANUFACTURE", panel: "TOOLS", promoted: 2, ids: &["cam.tool.define", "cam.tool.remove"] },
+    Section { tab: "MANUFACTURE", panel: "2D", promoted: 3, ids: &["cam.op.contour", "cam.op.pocket", "cam.op.remove"] },
+    Section { tab: "MANUFACTURE", panel: "POST", promoted: 2, ids: &["cam.post", "cam.list"] },
+    Section { tab: "MANUFACTURE", panel: "LASER", promoted: 2, ids: &["laser.profiles", "laser.exportPackage"] },
+    Section { tab: "MANUFACTURE", panel: "INSPECT", promoted: 2, ids: &["inspect.measure", "inspect.section"] },
 ];
 
 /// Compact source labels for painted big buttons only. Menus, search and tooltips
@@ -448,6 +454,9 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
     if crate::render_workspace::active(app) {
         return vec!["RENDER"];
     }
+    if crate::manufacture_workspace::active(app) {
+        return vec!["MANUFACTURE"];
+    }
     let mut tabs = TABS.to_vec();
     if app.session.active_sketch.is_some() {
         tabs.push("SKETCH");
@@ -461,7 +470,7 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
 /// Select contextual tabs on entry (or a different sheet body), allowing the other tabs to
 /// remain usable for the rest of that context. Sketch takes precedence over sheet metal.
 pub fn sync_context(app: &mut crate::SolveApp) {
-    if crate::render_workspace::active(app) {
+    if crate::render_workspace::active(app) || crate::manufacture_workspace::active(app) {
         return;
     }
     let context = app.session.active_sketch.map(|id| format!("sketch:{id}")).or_else(|| sheet_body(app).map(|body| format!("sheet:{body}")));
@@ -507,6 +516,10 @@ pub fn select_command_tab(app: &mut crate::SolveApp, id: &str) {
         if tab == "RENDER" {
             return;
         } // The Render workspace owns its entry/exit lifecycle.
+        if tab == "MANUFACTURE" {
+            crate::manufacture_workspace::enter(app);
+            return;
+        }
         if visible_tabs(app).contains(&tab) {
             app.ui.tab = tab.into();
         }

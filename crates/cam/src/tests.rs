@@ -609,6 +609,10 @@ fn posts_are_data_and_bad_ones_are_refused() {
     let post: Post = serde_json::from_str(&json).unwrap();
     assert_eq!(post, own);
     assert_eq!(Post::builtin("LinuxCNC"), Some(Post::rs274()));
+    assert_eq!(Post::builtin("grbl").unwrap().extension, "nc");
+    assert_eq!(Post::builtin("mach3").unwrap().extension, "tap");
+    assert!(Post::builtin("fanuc").unwrap().two_digit_codes);
+    assert!(Post::builtin("haas").unwrap().two_digit_codes);
     assert!(Post::BUILTIN.iter().all(|name| Post::builtin(name).is_some_and(|p| p.validate().is_ok())));
     let broken = |change: fn(&mut Post)| {
         let mut p = Post::rs274();

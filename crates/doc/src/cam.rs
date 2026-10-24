@@ -56,6 +56,17 @@ impl CamSettings {
     pub fn post(&self, name: &str) -> Option<&Post> {
         self.posts.iter().find(|p| p.name == name)
     }
+
+    /// Next unused `Setup 1`, `Setup 2`, … so a ribbon click can create a setup without typing.
+    pub fn unused_setup_name(&self) -> String {
+        for i in 1..=MAX_SETUPS {
+            let name = format!("Setup {i}");
+            if self.setup(&name).is_none() {
+                return name;
+            }
+        }
+        "Setup".into()
+    }
 }
 
 /// One machining setup: ISO 841 work frame, RS-274 work offset, optional stock, and operations.

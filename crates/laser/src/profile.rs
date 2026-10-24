@@ -1,10 +1,53 @@
-//! Built-in laser / engraver machine profiles (operator metadata for LightBurn handoff).
+//! Built-in laser / engraver machine profiles (operator metadata for LightBurn
+//! and LaserCraft handoff).
 //!
-//! Beds and device hints are taken from vendor manuals and LightBurn device docs — not
-//! invented. Cheap ChinaCNCzone routers are Mach3-class (DXF still useful for laser heads
-//! or CAM); Snapmaker Artisan family is Marlin with vendor `.lbdev` files.
+//! Beds and device hints are taken from vendor manuals and LightBurn device docs,
+//! not invented. Controller families match LaserCraft's DeviceProfile names so a
+//! job JSON can be opened there without renaming. Cheap ChinaCNCzone routers are
+//! Mach3-class (DXF still useful for laser heads or CAM); Snapmaker Artisan is
+//! Marlin with vendor `.lbdev` files.
 
 use serde::{Deserialize, Serialize};
+
+/// Controller family a profile speaks. Names match LaserCraft's `Controller`
+/// (PascalCase in JSON) so the `lasercraft` sidecar in `laser-job.json` loads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Controller {
+    Grbl,
+    Marlin,
+    SnapMaker,
+    EzCad2,
+    JczFiber,
+    XTool,
+    Mach3,
+}
+
+impl Controller {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Controller::Grbl => "Grbl",
+            Controller::Marlin => "Marlin",
+            Controller::SnapMaker => "SnapMaker",
+            Controller::EzCad2 => "EzCad2",
+            Controller::JczFiber => "JczFiber",
+            Controller::XTool => "XTool",
+            Controller::Mach3 => "Mach3",
+        }
+    }
+
+    pub fn is_galvo(self) -> bool {
+        matches!(self, Controller::EzCad2 | Controller::JczFiber)
+    }
+
+    pub fn gcode_flavor(self) -> Option<&'static str> {
+        match self {
+            Controller::Grbl => Some("grbl"),
+            Controller::Marlin | Controller::SnapMaker => Some("marlin"),
+            Controller::Mach3 => Some("mach3"),
+            _ => None,
+        }
+    }
+}
 
 /// Stable profile id used in `laser-job.json` and commands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -61,12 +104,41 @@ impl ProfileId {
         }
     }
 
+    /// LaserCraft built-in id when this machine is one of their shipped profiles.
+    pub fn lasercraft_id(self) -> Option<&'static str> {
+        match self {
+            ProfileId::CommarkerB6 => Some("commarker-b6"),
+            ProfileId::SnapmakerArtisan => Some("snapmaker"),
+            _ => None,
+        }
+    }
+
+    /// EZCAD `JCZ_COR_2_1` correction file LaserCraft already parses for this board.
+    pub fn correction_file(self) -> Option<&'static str> {
+        match self {
+            ProfileId::Commarker60wMopa | ProfileId::CommarkerB4 | ProfileId::CommarkerB6 | ProfileId::CommarkerOmniUv => Some("jcz15.cor"),
+            _ => None,
+        }
+    }
+
+    pub fn controller(self) -> Controller {
+        match self {
+            ProfileId::Commarker60wMopa | ProfileId::CommarkerB4 | ProfileId::CommarkerB6 | ProfileId::CommarkerOmniUv => Controller::EzCad2,
+            ProfileId::XtoolF1 | ProfileId::XtoolF1Ultra | ProfileId::XtoolD1 | ProfileId::XtoolD1Pro | ProfileId::XtoolS1 | ProfileId::XtoolP2 => {
+                Controller::XTool
+            }
+            ProfileId::SnapmakerArtisan | ProfileId::SnapmakerA350 | ProfileId::SnapmakerA250 => Controller::SnapMaker,
+            ProfileId::SnapmakerRay | ProfileId::MakeraCarvera | ProfileId::MakeraCarveraAir => Controller::Grbl,
+            ProfileId::Chinacnc3040 | ProfileId::Chinacnc6040 | ProfileId::Chinacnc6090 => Controller::Mach3,
+        }
+    }
+
     pub fn parse(s: &str) -> Option<Self> {
         let key = s.trim().to_ascii_lowercase().replace('_', "-");
         match key.as_str() {
             "commarker-60w-mopa" | "commarker60wmopa" => Some(ProfileId::Commarker60wMopa),
             "commarker-b4" | "commarkerb4" | "b4" => Some(ProfileId::CommarkerB4),
-            "commarker-b6" | "commarkerb6" | "b6" => Some(ProfileId::CommarkerB6),
+            "commarker-b6" | "commarkerb6" | "b6" | "commarker" => Some(ProfileId::CommarkerB6),
             "commarker-omni-uv" | "commarker-omni" | "omni-uv" | "omni" => Some(ProfileId::CommarkerOmniUv),
             "xtool-f1" | "xtoolf1" | "f1" => Some(ProfileId::XtoolF1),
             "xtool-f1-ultra" | "xtoolf1ultra" | "f1-ultra" | "f1ultra" => Some(ProfileId::XtoolF1Ultra),
@@ -74,7 +146,7 @@ impl ProfileId {
             "xtool-d1-pro" | "xtoold1pro" | "d1-pro" | "d1pro" => Some(ProfileId::XtoolD1Pro),
             "xtool-s1" | "xtools1" | "s1" => Some(ProfileId::XtoolS1),
             "xtool-p2" | "xtoolp2" | "p2" | "xtool-p2s" | "p2s" => Some(ProfileId::XtoolP2),
-            "snapmaker-artisan" | "artisan" => Some(ProfileId::SnapmakerArtisan),
+            "snapmaker-artisan" | "artisan" | "snapmaker" => Some(ProfileId::SnapmakerArtisan),
             "snapmaker-a350" | "a350" | "a350t" | "f350" => Some(ProfileId::SnapmakerA350),
             "snapmaker-a250" | "a250" | "a250t" | "f250" => Some(ProfileId::SnapmakerA250),
             "snapmaker-ray" | "ray" => Some(ProfileId::SnapmakerRay),
@@ -376,7 +448,14 @@ mod tests {
         assert_eq!(profile(ProfileId::Chinacnc6040).lightburn_device, "Mach3");
         assert_eq!(profile(ProfileId::CommarkerB6).bed_width_mm, 150.0);
         assert_eq!(ProfileId::parse("artisan"), Some(ProfileId::SnapmakerArtisan));
+        assert_eq!(ProfileId::parse("snapmaker"), Some(ProfileId::SnapmakerArtisan));
+        assert_eq!(ProfileId::parse("commarker-b6"), Some(ProfileId::CommarkerB6));
         assert_eq!(ProfileId::parse("6040"), Some(ProfileId::Chinacnc6040));
         assert_eq!(ProfileId::parse("carvera-air"), Some(ProfileId::MakeraCarveraAir));
+        assert_eq!(ProfileId::CommarkerB6.controller(), Controller::EzCad2);
+        assert_eq!(ProfileId::SnapmakerArtisan.controller(), Controller::SnapMaker);
+        assert_eq!(ProfileId::SnapmakerArtisan.lasercraft_id(), Some("snapmaker"));
+        assert_eq!(ProfileId::CommarkerB6.correction_file(), Some("jcz15.cor"));
+        assert_eq!(ProfileId::SnapmakerRay.controller().gcode_flavor(), Some("grbl"));
     }
 }

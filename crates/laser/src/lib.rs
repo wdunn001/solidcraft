@@ -1,7 +1,9 @@
-//! Laser mark domain: machine profiles and LightBurn handoff packages.
+//! Laser mark domain: machine profiles and LightBurn / LaserCraft handoff packages.
 //!
-//! v1 ships geometry + profile metadata for operator import into LightBurn.
-//! Direct device I/O (Serial/USB/BLE providers) is out of scope here.
+//! Geometry plus profile metadata for operator import. Direct device I/O stays out
+//! of this crate (LaserCraft owns USB/WebUSB and galvo list bytes). Profiles are
+//! data: a controller family, a work area, and optional galvo field hints, the same
+//! contract LaserCraft's DeviceProfile uses so a `.laser-job.json` can be opened there.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
@@ -10,7 +12,7 @@ pub mod package;
 pub mod profile;
 
 pub use package::{LaserJobMeta, LaserLayer, LaserPackage, Polyline2, write_ascii_dxf, write_svg};
-pub use profile::{LaserProfile, ProfileId, builtin_profiles, profile};
+pub use profile::{Controller, LaserProfile, ProfileId, builtin_profiles, profile};
 
 use thiserror::Error;
 

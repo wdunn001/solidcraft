@@ -325,7 +325,13 @@ pub const SECTIONS: &[Section] = &[
     Section { tab: "MANUFACTURE", panel: "2D", promoted: 3, ids: &["cam.op.contour", "cam.op.pocket", "cam.op.remove"] },
     Section { tab: "MANUFACTURE", panel: "POST", promoted: 2, ids: &["cam.post", "cam.list"] },
     Section { tab: "MANUFACTURE", panel: "LASER", promoted: 2, ids: &["laser.profiles", "laser.exportPackage"] },
-    Section { tab: "MANUFACTURE", panel: "INSPECT", promoted: 2, ids: &["inspect.measure", "inspect.section"] },
+    Section {
+        tab: "MANUFACTURE",
+        panel: "MACHINE",
+        promoted: 2,
+        ids: &["cam.machines", "cam.machine.plugins", "cam.machine.use", "cam.machine.status"],
+    },
+    Section { tab: "MANUFACTURE", panel: "INSPECT", promoted: 3, ids: &["inspect.measure", "inspect.section", "cam.probe.snippet"] },
 ];
 
 /// Compact source labels for painted big buttons only. Menus, search and tooltips

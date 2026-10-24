@@ -191,6 +191,7 @@ pub mod preview;
 mod primitive_units_tests;
 pub mod recovery_ui;
 pub mod ref_images;
+pub mod manufacture_workspace;
 pub mod render_workspace;
 #[cfg(test)]
 mod revolve_edit_tests;
@@ -423,6 +424,7 @@ pub struct SolveApp {
     saving: Option<save_job::Saving>,
     pub viewport: viewport::ViewportState,
     pub render_workspace: render_workspace::State,
+    pub manufacture_workspace: manufacture_workspace::State,
     pub tool: Option<tools::Tool>,
     pub dialog: Option<dialogs::Dialog>,
     /// The Change Parameters window, when open.
@@ -623,6 +625,7 @@ impl SolveApp {
             saving: None,
             viewport: viewport::ViewportState::default(),
             render_workspace,
+            manufacture_workspace: manufacture_workspace::State::default(),
             tool: None,
             dialog: None,
             params: None,
@@ -1008,6 +1011,7 @@ impl SolveApp {
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     documents::reset_chat(self);
                     render_workspace::reset_document(self);
+                    manufacture_workspace::reset_document(self);
                     dim_view::cancel();
                     self.menu.props = None;
                     sketch_attachment_ui::clear(self);
@@ -1105,6 +1109,7 @@ impl SolveApp {
             return;
         }
         workspace::select_command_tab(self, id);
+        manufacture_workspace::close_floating_dialogs(self);
         // Move a selected assembly placement the same way as its Browser menu, retaining
         // the exact instance path and the grounding/rigid-group restrictions.
         if id == "solid.move"
@@ -1203,6 +1208,9 @@ impl SolveApp {
             return;
         }
         if !sketch_tools::start_hook(self, id) {
+            return;
+        }
+        if !manufacture_workspace::start_hook(self, id) {
             return;
         }
         if remember_variant && solidcraft_engine::find_command(id).is_some_and(|c| c.info(&self.session).enabled) {
@@ -1777,6 +1785,7 @@ impl SolveApp {
         file_picker::tick(self, ctx);
         render_workspace::sync_backend(self);
         render_workspace::tick(self, ctx);
+        manufacture_workspace::tick(self, ctx);
         file_load::tick(self, ctx);
         save_job::tick(self, false);
         if self.saving.is_some() {
@@ -2025,6 +2034,9 @@ impl SolveApp {
         if render_workspace::active(self) {
             render_workspace::panel(self, ui);
         }
+        if manufacture_workspace::active(self) {
+            manufacture_workspace::panel(self, ui);
+        }
         if self.ui.show_browser {
             browser::browser(self, ui);
         }
@@ -2076,6 +2088,8 @@ impl SolveApp {
     fn show_workspace(&mut self, ui: &mut egui::Ui) {
         if render_workspace::active(self) {
             render_workspace::show(self, ui);
+        } else if manufacture_workspace::active(self) {
+            manufacture_workspace::show(self, ui);
         } else {
             viewport::show(self, ui);
         }

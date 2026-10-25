@@ -1001,7 +1001,6 @@ dependencies = [
 [[package]]
 name = "craft-cloud"
 version = "0.1.0"
-source = "git+https://github.com/wdunn001/craft-libs?rev=316a7addce818e22fc588b476b6a90ef27a4b42c#316a7addce818e22fc588b476b6a90ef27a4b42c"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1052,7 +1051,6 @@ dependencies = [
 [[package]]
 name = "craft-ui"
 version = "0.1.0"
-source = "git+https://github.com/wdunn001/craft-libs?rev=316a7addce818e22fc588b476b6a90ef27a4b42c#316a7addce818e22fc588b476b6a90ef27a4b42c"
 dependencies = [
  "craft-cloud",
  "egui",
@@ -4368,6 +4366,7 @@ dependencies = [
  "solidcraft-geom",
  "solidcraft-io",
  "solidcraft-kernel",
+ "solidcraft-laser",
  "solidcraft-render",
  "solidcraft-sketch",
  "thiserror 2.0.21",
@@ -4446,6 +4445,15 @@ dependencies = [
  "truck-stepio",
  "truck-topology",
  "web-time",
+]
+
+[[package]]
+name = "solidcraft-laser"
+version = "0.21.0-rc.2"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

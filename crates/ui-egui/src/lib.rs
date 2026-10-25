@@ -177,6 +177,8 @@ mod fillet_spline_handle_tests;
 pub mod mouse_gesture;
 pub(crate) mod navigation;
 pub use navigation::WebWheelGestures;
+pub mod manufacture_setup;
+pub mod manufacture_workspace;
 pub mod open_elsewhere;
 pub(crate) mod open_meshing;
 pub mod params_dialog;
@@ -191,7 +193,6 @@ pub mod preview;
 mod primitive_units_tests;
 pub mod recovery_ui;
 pub mod ref_images;
-pub mod manufacture_workspace;
 pub mod render_workspace;
 #[cfg(test)]
 mod revolve_edit_tests;

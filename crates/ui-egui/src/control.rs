@@ -514,9 +514,9 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
                     {
                         return err(e);
                     }
-                    if u.tab == "MANUFACTURE" && !crate::manufacture_workspace::active(app) {
+                    if crate::manufacture_workspace::is_tab(&u.tab) && !crate::manufacture_workspace::active(app) {
                         crate::manufacture_workspace::enter(app);
-                    } else if u.tab != "MANUFACTURE" && crate::manufacture_workspace::active(app) {
+                    } else if !crate::manufacture_workspace::is_tab(&u.tab) && crate::manufacture_workspace::active(app) {
                         crate::manufacture_workspace::exit(app);
                     }
                     u.ribbon_context = app.ui.ribbon_context.clone();

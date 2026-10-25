@@ -11,7 +11,7 @@ use solidcraft_cam::{
 };
 use solidcraft_doc::cam::{
     CamContourParams, CamCut, CamFaceRef, CamGeometry, CamOperation, CamPocketParams, CamSettings, CamSetup, CamSide, MAX_OPS, MAX_SETUPS, MAX_TOOLS,
-    PolygonRegion, StockBox, default_contour_params, default_cut, default_pocket_params,
+    PolygonRegion, StockBox, WcsOriginMode, default_contour_params, default_cut, default_pocket_params,
 };
 use solidcraft_doc::expr::Kind;
 use solidcraft_doc::project::resolve_face_indices;
@@ -20,64 +20,54 @@ use solidcraft_geom::{Loop2, Plane, Region2, Seg2, Vec2, Vec3};
 use solidcraft_sketch::{LinkGeom, LinkKind};
 
 use super::CommandSpec;
-use crate::params::{bad, bool_, expr, num, req_expr, str_, vec2, vec2_list, vec3};
+use crate::params::{bad, bool_, expr, num, req_expr, str_, string_list, vec2, vec2_list, vec3};
 use crate::{EngineError, Result, Session};
 
 pub static COMMANDS: &[CommandSpec] = &[
-    CommandSpec::new("cam.tool.define", "Define Tool", tool_cmd).at("MANUFACTURE", "TOOLS").icon("hole").params(
+    CommandSpec::new("cam.tool.define", "Define Tool", tool_cmd).icon("hole").params(
         "number (1…9999); kind?: flat_endmill|ball_endmill|drill (default flat_endmill); diameter (mm); flute_length (mm); \
          description?; flutes?; spindle_rpm?; feed?; plunge_feed?; stepdown?; stepover?",
     ),
-    CommandSpec::new("cam.tool.remove", "Remove Tool", tool_remove).at("MANUFACTURE", "TOOLS").icon("delete").params("number"),
-    CommandSpec::new("cam.setup", "CAM Setup", setup_cmd).at("MANUFACTURE", "SETUP").icon("settings").params(
+    CommandSpec::new("cam.tool.remove", "Remove Tool", tool_remove).icon("delete").params("number"),
+    CommandSpec::new("cam.setup", "CAM Setup", setup_cmd).icon("settings").params(
         "name?: Setup 1, Setup 2, … when omitted; work_offset?: 1…6 (G54…G59, default 1); \
          tool_axis?: [x,y,z] (programmed +Z, default [0,0,1]); \
          x_axis?: [x,y,z] (programmed +X, square to the tool axis; omitted, derived); \
          work_origin?: [x,y,z] mm part zero in the model (default [0,0,0]); \
          stock?: {min:[x,y,z], max:[x,y,z]}; delete?: bool",
     ),
-    CommandSpec::new("cam.op.contour", "2D Contour", contour_cmd).at("MANUFACTURE", "2D").icon("cut").params(
+    CommandSpec::new("cam.op.contour", "2D Contour", contour_cmd).icon("cut").params(
         "setup; name; tool (number); sketch?: id or name, with profiles?: as solid.extrude; faces?: [{body, name, at?}]; \
          or outer: [[x,y],…] (or regions: [{outer, holes?}]); holes?: [[[x,y],…]]; \
          side?: outside|inside|on (default outside); climb?: bool (default true); stock_to_leave?; tolerance?; \
          ramp_angle?: deg (default 0); clearance?; retract?; top?; bottom (required unless cut given); stepdown?; \
          feed?; plunge_feed?; spindle_rpm?; coolant?",
     ),
-    CommandSpec::new("cam.op.pocket", "2D Pocket", pocket_cmd).at("MANUFACTURE", "2D").icon("hole").params(
+    CommandSpec::new("cam.op.pocket", "2D Pocket", pocket_cmd).icon("hole").params(
         "setup; name; tool (number); sketch?: id or name, with profiles?; faces?; or outer/regions; holes?; \
          stepover? (default half the tool diameter); climb?; stock_to_leave?; tolerance?; ramp_angle?: deg; \
          clearance?; retract?; top?; bottom; stepdown?; feed?; plunge_feed?; spindle_rpm?; coolant?",
     ),
-    CommandSpec::new("cam.op.remove", "Remove CAM Operation", delete_op).at("MANUFACTURE", "2D").icon("delete").params("setup; name"),
-    CommandSpec::new("cam.post", "Post Process", post_cmd).at("MANUFACTURE", "POST").icon("export").noundo().params(
+    CommandSpec::new("cam.op.remove", "Remove CAM Operation", delete_op).icon("delete").params("setup; name"),
+    CommandSpec::new("cam.post", "Post Process", post_cmd).icon("export").noundo().params(
         "setup; post?: rs274 | name of a saved post (default rs274); program?: name (default the setup's) → \
          {gcode, extension, post, operations, readback}. G-code is always read back and checked against the toolpaths.",
     ),
-    CommandSpec::new("cam.list", "List CAM", list_cmd)
-        .at("MANUFACTURE", "POST")
-        .icon("list")
-        .noundo()
-        .params("→ tools, setups (with operations) and saved posts"),
-    CommandSpec::new("cam.machines", "List Machines", machines_cmd)
-        .at("MANUFACTURE", "MACHINE")
-        .icon("list")
-        .noundo()
-        .params("→ machines: OEM and hobby presets (id, profile)"),
+    CommandSpec::new("cam.list", "List CAM", list_cmd).icon("list").noundo().params("→ tools, setups (with operations) and saved posts"),
+    CommandSpec::new("cam.machines", "List Machines", machines_cmd).icon("list").noundo().params("→ machines: OEM and hobby presets (id, profile)"),
     CommandSpec::new("cam.machine.plugins", "Machine Plugins", machine_plugins_cmd)
-        .at("MANUFACTURE", "MACHINE")
         .icon("list")
         .noundo()
         .params("→ plugins (none, fake, mtconnect, focas, thinc) and the active descriptor"),
-    CommandSpec::new("cam.machine.use", "Use Machine Plugin", machine_use_cmd).at("MANUFACTURE", "MACHINE").icon("settings").noundo().params(
+    CommandSpec::new("cam.machine.use", "Use Machine Plugin", machine_use_cmd).icon("settings").noundo().params(
         "plugin: none|fake|mtconnect|focas|thinc; endpoint?: http://127.0.0.1:8082/VF-2 (mtconnect) \
              or 127.0.0.1:8193 (focas) / :5000 (thinc); fixture?: bool (mtconnect, default true in the browser) → descriptor",
     ),
     CommandSpec::new("cam.machine.status", "Machine Status", machine_status_cmd)
-        .at("MANUFACTURE", "MACHINE")
         .icon("list")
         .noundo()
         .params("→ live status from the active plugin (or unavailable)"),
-    CommandSpec::new("cam.probe.snippet", "Probe Snippet", probe_snippet_cmd).at("MANUFACTURE", "INSPECT").icon("hole").noundo().params(
+    CommandSpec::new("cam.probe.snippet", "Probe Snippet", probe_snippet_cmd).icon("hole").noundo().params(
         "cycle: protected_move|single_surface|web_pocket|bore_boss|internal_corner|external_corner (or 9810…9816); \
              style?: haas_inspection_plus|fanuc_inspection_plus (or post?: haas|fanuc); \
              tool?: ATC pocket (default 25); x?; y?; z?; clearance_z?; protected_feed?; \
@@ -181,7 +171,8 @@ fn setup_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let stock = match p.get("stock") {
         None => existing.as_ref().and_then(|e| e.stock),
-        Some(v) => Some(stock_box(cmd, v)?),
+        Some(v) if v.get("min").is_some() => Some(stock_box(cmd, v)?),
+        Some(_) => existing.as_ref().and_then(|e| e.stock),
     };
     let mut setup = CamSetup::new(&name);
     setup.work_offset = work_offset;
@@ -189,6 +180,43 @@ fn setup_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     setup.x_axis = x_axis;
     setup.work_origin = work_origin;
     setup.stock = stock;
+    setup.stock_spec = parse_value(cmd, p, "stock_spec", existing.as_ref().map(|e| e.stock_spec.clone()).unwrap_or_default())?;
+    setup.wcs = parse_value(cmd, p, "wcs", existing.as_ref().map(|e| e.wcs.clone()).unwrap_or_default())?;
+    setup.wcs_orientation = parse_value(cmd, p, "wcs_orientation", existing.as_ref().map(|e| e.wcs_orientation).unwrap_or_default())?;
+    setup.wcs_origin_mode =
+        parse_value(cmd, p, "wcs_origin_mode", existing.as_ref().map(|e| e.wcs_origin_mode).unwrap_or(WcsOriginMode::SelectedPoint))?;
+    setup.box_point = parse_value(cmd, p, "box_point", existing.as_ref().map(|e| e.box_point).unwrap_or_default())?;
+    setup.flip_z = bool_(p, "flip_z").unwrap_or(existing.as_ref().map(|e| e.flip_z).unwrap_or(false));
+    setup.flip_x = bool_(p, "flip_x").unwrap_or(existing.as_ref().map(|e| e.flip_x).unwrap_or(false));
+    setup.model_bodies = if p.get("model_bodies").is_some() {
+        string_list(p, "model_bodies")
+    } else {
+        existing.as_ref().map(|e| e.model_bodies.clone()).unwrap_or_default()
+    };
+    setup.operation_type = parse_value(cmd, p, "operation_type", existing.as_ref().map(|e| e.operation_type).unwrap_or_default())?;
+    setup.post_opts = parse_value(cmd, p, "post_opts", existing.as_ref().map(|e| e.post_opts.clone()).unwrap_or_default())?;
+    setup.machine = match p.get("machine") {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(Value::Null) => None,
+        Some(_) => return Err(bad(cmd, "`machine` must be a name or null")),
+        None => existing.as_ref().and_then(|e| e.machine.clone()),
+    };
+    setup.post = match p.get("post") {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        Some(Value::Null) => None,
+        Some(_) => return Err(bad(cmd, "`post` must be a name or null")),
+        None => existing.as_ref().and_then(|e| e.post.clone()),
+    };
+    if p.get("wcs").is_some() {
+        setup.work_origin = setup.wcs.origin;
+        setup.tool_axis = setup.wcs.z_axis();
+        setup.x_axis = Some(setup.wcs.x_axis);
+    } else if existing.is_none() {
+        setup.wcs.origin = setup.work_origin;
+    }
+    if (1..=6).contains(&setup.post_opts.wcs_offset) && p.get("post_opts").is_some() && p.get("work_offset").is_none() {
+        setup.work_offset = setup.post_opts.wcs_offset as u8;
+    }
     if let Some(existing) = &existing {
         setup.operations = existing.operations.clone();
     }
@@ -199,15 +227,20 @@ fn setup_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     }
     match doc.cam.setups.iter_mut().find(|x| x.name == name) {
         Some(slot) => {
-            slot.work_offset = setup.work_offset;
-            slot.tool_axis = setup.tool_axis;
-            slot.x_axis = setup.x_axis;
-            slot.work_origin = setup.work_origin;
-            slot.stock = setup.stock;
+            let operations = std::mem::take(&mut slot.operations);
+            *slot = setup.clone();
+            slot.operations = operations;
         }
         None => doc.cam.setups.push(setup.clone()),
     }
     Ok(json!({"setup": setup_json(s.doc.cam.setup(&name).unwrap_or(&setup))}))
+}
+
+fn parse_value<T: serde::de::DeserializeOwned>(cmd: &str, p: &Value, k: &str, fallback: T) -> Result<T> {
+    match p.get(k) {
+        None => Ok(fallback),
+        Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("`{k}`: {e}"))),
+    }
 }
 
 fn stock_box(cmd: &str, v: &Value) -> Result<StockBox> {
@@ -842,6 +875,9 @@ fn setup_json(setup: &CamSetup) -> Value {
         "x_axis": setup.x_axis,
         "work_origin": setup.work_origin,
         "stock": setup.stock,
+        "stock_spec": setup.stock_spec,
+        "wcs": setup.wcs,
+        "model_bodies": setup.model_bodies,
         "operations": setup.operations.iter().map(|op| match op {
             CamOperation::Contour { name, tool, geometry, params, cut, spindle_rpm, coolant } => json!({
                 "type": "contour", "name": name, "tool": tool, "geometry": geometry,
@@ -911,6 +947,23 @@ mod tests {
 
         let forced = run(&mut Session::new(s.doc.as_ref().clone()), "cam.post", json!({"setup": "Top", "verify": false}));
         assert!(forced["readback"]["within"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn setup_stores_model_bodies_and_wcs() {
+        let mut s = Session::default();
+        run(
+            &mut s,
+            "cam.setup",
+            json!({
+                "name": "Bodies",
+                "model_bodies": ["Part"],
+                "wcs": {"origin": [1.0, 2.0, 3.0], "x_axis": [1.0, 0.0, 0.0], "y_axis": [0.0, 1.0, 0.0]}
+            }),
+        );
+        assert_eq!(s.doc.cam.setups[0].model_bodies, ["Part"]);
+        assert_eq!(s.doc.cam.setups[0].work_origin, [1.0, 2.0, 3.0]);
+        assert_eq!(s.doc.cam.setups[0].wcs.origin, [1.0, 2.0, 3.0]);
     }
 
     #[test]

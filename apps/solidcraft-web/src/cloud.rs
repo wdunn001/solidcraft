@@ -7,7 +7,7 @@
 //! a standalone hosting such as project Pages has no service to talk to.
 
 use craft_cloud_client::{Client, Error};
-use solidcraft_ui_egui::cloud::{Account, CloudBackend, Event, Fault, Job, Post};
+use solidcraft_ui_egui::cloud::{Account, CloudBackend, Event, Fault, GitView, Job, Post};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen_futures::spawn_local;
 
@@ -45,7 +45,12 @@ impl Service {
         match job {
             Job::Account => {
                 let answer =
-                    self.me().await.map(|me| Account { display: me.display, capabilities: me.capabilities, provider_linked: me.provider_linked });
+                    self.me().await.map(|me| Account {
+                        display: me.display,
+                        capabilities: me.capabilities,
+                        provider_linked: me.provider_linked,
+                        git: me.git.map(|g| GitView { branch: g.branch, remote: g.remote }),
+                    });
                 if matches!(&answer, Err(Fault::Unauthenticated)) {
                     offer_login();
                 }

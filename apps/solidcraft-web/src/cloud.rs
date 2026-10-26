@@ -44,13 +44,12 @@ impl Service {
         };
         match job {
             Job::Account => {
-                let answer =
-                    self.me().await.map(|me| Account {
-                        display: me.display,
-                        capabilities: me.capabilities,
-                        provider_linked: me.provider_linked,
-                        git: me.git.map(|g| GitView { branch: g.branch, remote: g.remote }),
-                    });
+                let answer = self.me().await.map(|me| Account {
+                    display: me.display,
+                    capabilities: me.capabilities,
+                    provider_linked: me.provider_linked,
+                    git: me.git.map(|g| GitView { branch: g.branch, remote: g.remote }),
+                });
                 if matches!(&answer, Err(Fault::Unauthenticated)) {
                     offer_login();
                 }

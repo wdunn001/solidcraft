@@ -8,10 +8,10 @@
 
 #[cfg(target_arch = "wasm32")]
 mod api;
-#[cfg(any(target_arch = "wasm32", test))]
-mod disk;
 #[cfg(all(target_arch = "wasm32", feature = "cloud"))]
 mod cloud;
+#[cfg(any(target_arch = "wasm32", test))]
+mod disk;
 #[cfg(target_arch = "wasm32")]
 mod files;
 #[cfg(target_arch = "wasm32")]

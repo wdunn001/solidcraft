@@ -167,7 +167,3 @@ egui-wgpu = { path = "vendor/egui-wgpu" }
 inherits = "ci"
 incremental = true
 
-
-[patch."https://github.com/wdunn001/craft-libs"]
-craft-ui = { path = "../gh-craft-libs/crates/ui" }
-craft-cloud = { path = "../gh-craft-libs/crates/cloud" }

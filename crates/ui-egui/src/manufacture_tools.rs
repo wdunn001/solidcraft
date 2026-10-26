@@ -294,6 +294,14 @@ impl Tool {
     pub fn surface_speed_m_min(&self, spindle_rpm: u32) -> f64 {
         std::f64::consts::PI * self.diameter * f64::from(spindle_rpm) / 1_000.0
     }
+
+    pub fn feed_per_tooth(&self, feedrate: f64, spindle_rpm: u32) -> f64 {
+        if spindle_rpm == 0 || self.flutes == 0 {
+            0.0
+        } else {
+            feedrate / (f64::from(spindle_rpm) * f64::from(self.flutes))
+        }
+    }
 }
 
 use crate::SolveApp;

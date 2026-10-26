@@ -28,8 +28,6 @@ pub use craft_ui::cloud::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::json;
-
 use egui::{Color32, Painter, Rect, Stroke, StrokeKind, pos2};
 use solidcraft_engine::{Session, Visibility, doc::Document, io};
 
@@ -346,18 +344,6 @@ impl CloudApp for SolveApp {
 
     fn save_note(&self) -> Option<String> {
         Some(CloudApp::tr(self, "The design is saved as a SolidCraft design (.solidcraft) in the folder above."))
-    }
-
-    fn recents(&self) -> Vec<String> {
-        self.home.recent.clone()
-    }
-
-    fn open_recent(&mut self, path: &str) {
-        let _ = self.run("file.open", json!({"path": path}));
-    }
-
-    fn browse_local(&mut self) {
-        let _ = self.run("file.open", json!({}));
     }
 }
 

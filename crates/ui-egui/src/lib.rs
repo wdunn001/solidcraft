@@ -178,6 +178,7 @@ pub mod mouse_gesture;
 pub(crate) mod navigation;
 pub use navigation::WebWheelGestures;
 pub mod manufacture_setup;
+pub mod manufacture_tools;
 pub mod manufacture_workspace;
 pub mod open_elsewhere;
 pub(crate) mod open_meshing;

@@ -19,7 +19,7 @@ use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 use craft_cloud_client::{Client, Error};
-use solidcraft_ui_egui::cloud::{Account, CloudBackend, Event, Fault, Job, Post};
+use solidcraft_ui_egui::cloud::{Account, CloudBackend, Event, Fault, GitView, Job, Post};
 
 /// How long to keep polling a sign-in before giving up on it.
 const SIGN_IN_WAIT: Duration = Duration::from_secs(300);
@@ -106,7 +106,12 @@ impl Worker {
                     // in as. The session file is written before the answer
                     // exists, so it is completed here.
                     remember_account(&me.id, &me.display);
-                    Account { display: me.display, capabilities: me.capabilities, provider_linked: me.provider_linked }
+                    Account {
+                        display: me.display,
+                        capabilities: me.capabilities,
+                        provider_linked: me.provider_linked,
+                        git: me.git.map(|g| GitView { branch: g.branch, remote: g.remote }),
+                    }
                 });
                 self.post(Event::Account(answer));
             }

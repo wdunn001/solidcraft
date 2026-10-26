@@ -47,6 +47,31 @@ pub fn open_new(app: &mut SolveApp) {
     let _ = app.run("select.clear", json!({}));
 }
 
+pub fn dialog_open(app: &SolveApp) -> bool {
+    app.manufacture_workspace.setup_dialog.is_some()
+}
+
+/// Commit the open SETUP window the same way its OK button does.
+pub fn commit(app: &mut SolveApp) {
+    let Some(state) = app.manufacture_workspace.setup_dialog.clone() else {
+        return;
+    };
+    if save_setup(app, &state.name, state.draft) {
+        app.manufacture_workspace.active_setup = state.name;
+        app.ui.pick_bodies = false;
+        app.manufacture_workspace.setup_dialog = None;
+    }
+}
+
+/// Dismiss the open SETUP window the same way its Cancel button does.
+pub fn cancel(app: &mut SolveApp) {
+    if let Some(state) = app.manufacture_workspace.setup_dialog.take()
+        && state.picking
+    {
+        app.ui.pick_bodies = false;
+    }
+}
+
 pub fn open_edit(app: &mut SolveApp, name: &str) {
     crate::manufacture_workspace::enter(app);
     let Some(setup) = app.session.doc.cam.setup(name).cloned() else {

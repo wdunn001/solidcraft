@@ -342,6 +342,7 @@ fn drill_program() -> Program {
     verify(&path, &cut(0.0, -10.0, 1.0).heights).unwrap();
     Program {
         work_offset: None,
+        notes: Vec::new(),
         name: "Bracket (rev 2)".into(),
         operations: vec![Operation { name: "Drill".into(), tool: t, spindle_rpm: 3000.0, coolant: true, path }],
     }
@@ -408,6 +409,7 @@ fn written_program_reads_back_as_the_same_path() {
     let path = pocket(&regions, &tool(6.0), &params, &cut(0.0, -4.0, 2.0)).unwrap();
     let program = Program {
         work_offset: None,
+        notes: Vec::new(),
         name: "p".into(),
         operations: vec![Operation { name: "Pocket".into(), tool: tool(6.0), spindle_rpm: 12000.0, coolant: false, path: path.clone() }],
     };
@@ -440,6 +442,7 @@ fn every_post_writes_within_its_own_precision() {
     let path = pocket(&regions, &tool(6.0), &params, &cut(0.0, -4.0, 2.0)).unwrap();
     let mut program = Program {
         work_offset: None,
+        notes: Vec::new(),
         name: "p".into(),
         operations: vec![Operation { name: "Pocket".into(), tool: tool(6.0), spindle_rpm: 12000.0, coolant: false, path: path.clone() }],
     };
@@ -476,6 +479,7 @@ fn every_post_writes_within_its_own_precision() {
     // A program with no cut against one with cuts: as far as the comparison looks.
     let empty = Program {
         work_offset: None,
+        notes: Vec::new(),
         name: "e".into(),
         operations: vec![Operation {
             path: Toolpath { moves: vec![Move::Rapid { to: Vec3::new(0.0, 0.0, 10.0) }] },
@@ -496,6 +500,7 @@ fn arc_too_short_to_write_is_never_a_full_circle() {
     ];
     let program = Program {
         work_offset: None,
+        notes: Vec::new(),
         name: "p".into(),
         operations: vec![Operation { name: "o".into(), tool: tool(6.0), spindle_rpm: 1000.0, coolant: false, path: Toolpath { moves } }],
     };
@@ -571,6 +576,7 @@ fn hostile_values_are_errors_never_panics() {
         let _ = verify(&path, &good_cut.heights);
         let program = Program {
             work_offset: None,
+            notes: Vec::new(),
             name: "x".into(),
             operations: vec![Operation { name: "o".into(), tool: tool(6.0), spindle_rpm: b, coolant: false, path }],
         };
@@ -964,4 +970,15 @@ fn a_spindle_over_the_holder_speed_stops_without_any_feed_fix() {
     let f = rep.findings.iter().find(|f| f.limit == Limit::SpindleSpeed).unwrap();
     assert_eq!(f.severity, Severity::Stop);
     assert_eq!(f.scale, None);
+}
+
+#[test]
+fn program_notes_are_written_as_comments_after_the_name() {
+    let mut program = drill_program();
+    program.notes = vec!["accepted: tool deflection (finish pass, checked by hand)".into()];
+    let text = emit(&program, &Post::rs274()).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[1].starts_with("(accepted: tool deflection"), "{text}");
+    program.notes = vec![String::new(); 65];
+    assert!(emit(&program, &Post::rs274()).is_err());
 }

@@ -5,11 +5,13 @@
 
 use serde_json::{Value, json};
 use solidcraft_cam::{
-    ContourParams, Cut, Feeds, Heights, Operation, PocketParams, Post, Program, Side, Tool, ToolKind, contour, emit, pocket, readback,
+    Context, ContourParams, Cut, Feeds, Heights, Limit, Machine, Material, OpReport, Operation, Physical, PocketParams, Post, Program, Severity,
+    Side, Source, Stock, StockBounds, Tool, ToolKind, adapt_feeds, check_operation, contour, emit, pocket, readback,
 };
 use solidcraft_doc::cam::{
-    CamContourParams, CamCut, CamFaceRef, CamGeometry, CamOperation, CamPocketParams, CamSettings, CamSetup, CamSide, MAX_OPS, MAX_SETUPS, MAX_TOOLS,
-    PolygonRegion, StockBox, WcsOriginMode, default_contour_params, default_cut, default_pocket_params,
+    AcceptedFinding, CamContourParams, CamCut, CamFaceRef, CamGeometry, CamOperation, CamPocketParams, CamSettings, CamSetup, CamSide, MAX_ACCEPTED,
+    MAX_LIBRARY, MAX_OPS, MAX_SETUPS, MAX_TOOLS, OpPhysics, PolygonRegion, StockBox, WcsOriginMode, default_contour_params, default_cut,
+    default_pocket_params,
 };
 use solidcraft_doc::expr::Kind;
 use solidcraft_doc::project::resolve_face_indices;
@@ -24,7 +26,10 @@ use crate::{Result, Session};
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("cam.tool.define", "Define Tool", tool_cmd).icon("hole").params(
         "number (1…9999); kind?: flat_endmill|ball_endmill|drill (default flat_endmill); diameter (mm); flute_length (mm); \
-         description?; flutes?; spindle_rpm?; feed?; plunge_feed?; stepdown?; stepover?",
+         description?; flutes?; spindle_rpm?; feed?; plunge_feed?; stepdown?; stepover?; \
+         physical?: {corner_radius?, shank_diameter?, stick_out?, material?: hss|carbide|ceramic|pcd|cbn|other, helix_angle? (rad), \
+         holder?: {name, gauge_length?, nose_diameter?, max_rpm?}, limits?: {max_torque? N·m, max_force? N, max_deflection? mm, source?}, \
+         catalogue?: {library, id, version?}, wear? 0…1, runout? mm, source?: measured|catalogue|assumed} (omitted, kept)",
     ),
     CommandSpec::new("cam.tool.remove", "Remove Tool", tool_remove).icon("delete").params("number"),
     CommandSpec::new("cam.setup", "CAM Setup", setup_cmd).icon("settings").params(
@@ -32,25 +37,44 @@ pub static COMMANDS: &[CommandSpec] = &[
          tool_axis?: [x,y,z] (programmed +Z, default [0,0,1]); \
          x_axis?: [x,y,z] (programmed +X, square to the tool axis; omitted, derived); \
          work_origin?: [x,y,z] mm part zero in the model (default [0,0,0]); \
-         stock?: {min:[x,y,z], max:[x,y,z]}; delete?: bool",
+         stock?: {min:[x,y,z], max:[x,y,z]}; material?: name in cam.material.define, or null; \
+         machine?: name (a cam.machine.define name is checked against), or null; confidence?: 0 conservative…1 aggressive, or null; delete?: bool",
     ),
     CommandSpec::new("cam.op.contour", "2D Contour", contour_cmd).icon("cut").params(
         "setup; name; tool (number); sketch?: id or name, with profiles?: as solid.extrude; faces?: [{body, name, at?}]; \
          or outer: [[x,y],…] (or regions: [{outer, holes?}]); holes?: [[[x,y],…]]; \
          side?: outside|inside|on (default outside); climb?: bool (default true); stock_to_leave?; tolerance?; \
          ramp_angle?: deg (default 0); clearance?; retract?; top?; bottom (required unless cut given); stepdown?; \
-         feed?; plunge_feed?; spindle_rpm?; coolant?",
+         feed?; plunge_feed?; spindle_rpm?; coolant?; confidence?; adapt_feed?: bool (feed per move from the limits)",
     ),
     CommandSpec::new("cam.op.pocket", "2D Pocket", pocket_cmd).icon("hole").params(
         "setup; name; tool (number); sketch?: id or name, with profiles?; faces?; or outer/regions; holes?; \
          stepover? (default half the tool diameter); climb?; stock_to_leave?; tolerance?; ramp_angle?: deg; \
-         clearance?; retract?; top?; bottom; stepdown?; feed?; plunge_feed?; spindle_rpm?; coolant?",
+         clearance?; retract?; top?; bottom; stepdown?; feed?; plunge_feed?; spindle_rpm?; coolant?; confidence?; adapt_feed?",
     ),
     CommandSpec::new("cam.op.remove", "Remove CAM Operation", delete_op).icon("delete").params("setup; name"),
     CommandSpec::new("cam.post", "Post Process", post_cmd).icon("export").noundo().params(
         "setup; post?: rs274 | name of a saved post (default rs274); program?: name (default the setup's) → \
-         {gcode, extension, post, operations, readback}. G-code is always read back and checked against the toolpaths.",
+         {gcode, extension, post, operations, readback, limits}. G-code is always read back and checked against the toolpaths, \
+         and every move is checked against the limits: a stop finding not accepted with cam.finding.accept refuses the post.",
     ),
+    CommandSpec::new("cam.check", "Check Limits", check_cmd)
+        .icon("list")
+        .noundo()
+        .params("setup → {operations: [{operation, findings, scale, binding, notes, peaks…}], worst, stock}. Changes nothing."),
+    CommandSpec::new("cam.finding.accept", "Accept Finding", accept_cmd).icon("settings").params(
+        "setup; operation; limit: spindle_power|spindle_torque|spindle_speed|holder_speed|machine_feed|tool_torque|tool_force|\
+         tool_deflection|chip_thickness|rapid_in_material; reason (required unless revoke); revoke?: bool",
+    ),
+    CommandSpec::new("cam.material.define", "Define Material", material_cmd)
+        .icon("settings")
+        .params("name; group: P|M|K|N|S|H (ISO 513); kc11? N/mm²; mc?; youngs_modulus? N/mm²; source?: measured|catalogue|assumed (default assumed)"),
+    CommandSpec::new("cam.material.remove", "Remove Material", material_remove).icon("delete").params("name"),
+    CommandSpec::new("cam.machine.define", "Define Machine", machine_cmd).icon("settings").params(
+        "name; min_rpm?; max_rpm?; spindle?: [{rpm, power W, torque N·m}] in rising rpm; max_feed? mm/min; axis_thrust?: [x,y,z] N; \
+         source?: measured|catalogue|assumed (default assumed)",
+    ),
+    CommandSpec::new("cam.machine.remove", "Remove Machine", machine_remove).icon("delete").params("name"),
     CommandSpec::new("cam.list", "List CAM", list_cmd).icon("list").noundo().params("→ tools, setups (with operations) and saved posts"),
 ];
 
@@ -80,6 +104,8 @@ fn tool_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     tool.plunge_feed = num(p, "plunge_feed").or(tool.plunge_feed);
     tool.stepdown = num(p, "stepdown").or(tool.stepdown);
     tool.stepover = num(p, "stepover").or(tool.stepover);
+    let kept = s.doc.cam.tool(number).map(|t| t.physical.clone()).unwrap_or_default();
+    tool.physical = parse_value::<Physical>(cmd, p, "physical", kept)?;
     tool.validate().map_err(|e| bad(cmd, e.to_string()))?;
     let doc = s.doc_mut();
     if doc.cam.tools.len() >= MAX_TOOLS && !doc.cam.tools.iter().any(|t| t.number == number) {
@@ -180,6 +206,22 @@ fn setup_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         Some(_) => return Err(bad(cmd, "`machine` must be a name or null")),
         None => existing.as_ref().and_then(|e| e.machine.clone()),
     };
+    setup.material = match p.get("material") {
+        Some(Value::String(m)) if !m.is_empty() => {
+            if s.doc.cam.material(m).is_none() {
+                return Err(bad(cmd, format!("no material `{m}` (cam.material.define first)")));
+            }
+            Some(m.clone())
+        }
+        Some(Value::Null) => None,
+        Some(_) => return Err(bad(cmd, "`material` must be a name or null")),
+        None => existing.as_ref().and_then(|e| e.material.clone()),
+    };
+    setup.confidence = match p.get("confidence") {
+        Some(Value::Null) => None,
+        Some(v) => Some(v.as_f64().ok_or_else(|| bad(cmd, "`confidence` must be a number 0…1 or null"))?),
+        None => existing.as_ref().and_then(|e| e.confidence),
+    };
     setup.post = match p.get("post") {
         Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
         Some(Value::Null) => None,
@@ -258,6 +300,16 @@ fn op_cmd(s: &mut Session, p: &Value, cmd: &str, is_contour: bool) -> Result<Val
     let cut = cut_param(cmd, p, &tool)?;
     let spindle_rpm = num(p, "spindle_rpm").or(tool.spindle_rpm);
     let coolant = bool_(p, "coolant").unwrap_or(false);
+    let mut physics: OpPhysics =
+        s.doc.cam.setup(&setup_name).and_then(|st| st.operations.iter().find(|o| o.name() == name)).map(|o| o.physics().clone()).unwrap_or_default();
+    match p.get("confidence") {
+        Some(Value::Null) => physics.confidence = None,
+        Some(v) => physics.confidence = Some(v.as_f64().ok_or_else(|| bad(cmd, "`confidence` must be a number 0…1 or null"))?),
+        None => {}
+    }
+    if let Some(a) = bool_(p, "adapt_feed") {
+        physics.adapt_feed = a;
+    }
     let op = if is_contour {
         let mut params = default_contour_params();
         if let Some(side) = str_(p, "side") {
@@ -275,7 +327,7 @@ fn op_cmd(s: &mut Session, p: &Value, cmd: &str, is_contour: bool) -> Result<Val
         if let Some(v) = expr(p, "ramp_angle") {
             params.ramp_angle = v;
         }
-        CamOperation::Contour { name: name.clone(), tool: tool_n, geometry, params, cut, spindle_rpm, coolant }
+        CamOperation::Contour { name: name.clone(), tool: tool_n, geometry, params, cut, spindle_rpm, coolant, physics }
     } else {
         let stepover = match expr(p, "stepover") {
             Some(e) => e,
@@ -297,7 +349,7 @@ fn op_cmd(s: &mut Session, p: &Value, cmd: &str, is_contour: bool) -> Result<Val
         if let Some(v) = expr(p, "ramp_angle") {
             params.ramp_angle = v;
         }
-        CamOperation::Pocket { name: name.clone(), tool: tool_n, geometry, params, cut, spindle_rpm, coolant }
+        CamOperation::Pocket { name: name.clone(), tool: tool_n, geometry, params, cut, spindle_rpm, coolant, physics }
     };
     op.validate().map_err(|e| bad(cmd, e.to_string()))?;
     let setup = s.doc.cam.setup(&setup_name).cloned().ok_or_else(|| bad(cmd, format!("no setup `{setup_name}` (cam.setup first)")))?;
@@ -471,17 +523,28 @@ fn post_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let post = resolve_post(&s.doc.cam, post_name).map_err(|e| bad(cmd, e))?;
     post.validate().map_err(|e| bad(cmd, e.to_string()))?;
     let program_name = str_(p, "program").unwrap_or(setup.name.as_str()).to_string();
-    let mut program = Program { name: program_name, operations: Vec::new(), work_offset: Some(setup.work_offset) };
-    for op in &setup.operations {
-        let tool = s.doc.cam.tool(op.tool()).cloned().ok_or_else(|| bad(cmd, format!("operation `{}` needs tool {}", op.name(), op.tool())))?;
-        let path = build_path(s, &setup, op).map_err(|e| bad(cmd, e))?;
-        let (spindle_rpm, coolant) = match op {
-            CamOperation::Contour { spindle_rpm, coolant, .. } | CamOperation::Pocket { spindle_rpm, coolant, .. } => {
-                (spindle_rpm.or(tool.spindle_rpm).unwrap_or(6000.0), *coolant)
-            }
-        };
-        program.operations.push(Operation { name: op.name().into(), tool, spindle_rpm, coolant, path });
+    let mut program = build_program(s, &setup, program_name).map_err(|e| bad(cmd, e))?;
+    let checked = check_program(s, &setup, &mut program).map_err(|e| bad(cmd, e))?;
+    let stops: Vec<&str> = checked
+        .reports
+        .iter()
+        .flat_map(|r| &r.findings)
+        .filter(|f| f.severity == Severity::Stop && !f.accepted)
+        .map(|f| f.summary.as_str())
+        .collect();
+    if !stops.is_empty() {
+        return Err(bad(cmd, format!("the program breaks a limit (accept it with cam.finding.accept, or change the cut): {}", stops.join("; "))));
     }
+    program.notes = checked
+        .reports
+        .iter()
+        .flat_map(|r| r.findings.iter().filter(|f| f.accepted).map(move |f| (r, f)))
+        .filter_map(|(r, f)| {
+            let op = setup.operations.iter().find(|o| o.name() == r.operation)?;
+            let why = op.physics().accepted.iter().find(|a| a.limit == f.limit).map(|a| a.reason.clone()).unwrap_or_default();
+            Some(format!("accepted in {}: {}, reason: {}", r.operation, f.limit.label(), why))
+        })
+        .collect();
     let gcode = emit(&program, &post).map_err(|e| bad(cmd, e.to_string()))?;
     let mut out = json!({
         "gcode": gcode,
@@ -501,7 +564,217 @@ fn post_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         "cut_minutes": rb.cut_minutes,
         "within": rb.within(),
     });
+    out["limits"] = checked.json();
     Ok(out)
+}
+
+fn build_program(s: &Session, setup: &CamSetup, name: String) -> std::result::Result<Program, String> {
+    let mut program = Program { name, operations: Vec::new(), work_offset: Some(setup.work_offset), notes: Vec::new() };
+    for op in &setup.operations {
+        let tool = s.doc.cam.tool(op.tool()).cloned().ok_or_else(|| format!("operation `{}` needs tool {}", op.name(), op.tool()))?;
+        let path = build_path(s, setup, op)?;
+        let (spindle_rpm, coolant) = match op {
+            CamOperation::Contour { spindle_rpm, coolant, .. } | CamOperation::Pocket { spindle_rpm, coolant, .. } => {
+                (spindle_rpm.or(tool.spindle_rpm).unwrap_or(6000.0), *coolant)
+            }
+        };
+        program.operations.push(Operation { name: op.name().into(), tool, spindle_rpm, coolant, path });
+    }
+    Ok(program)
+}
+
+/// The limits on a whole program, and the stock they were measured on.
+struct Checked {
+    reports: Vec<OpReport>,
+    stock: StockBounds,
+    cell: f64,
+}
+
+impl Checked {
+    fn worst(&self) -> Severity {
+        self.reports.iter().map(OpReport::worst).max().unwrap_or(Severity::Ok)
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "worst": self.worst(),
+            "operations": self.reports,
+            "stock": {"min": self.stock.min, "max": self.stock.max, "source": self.stock.source, "cell": self.cell},
+        })
+    }
+}
+
+/// Measures every operation's engagement on one stock, in order, checks it against the limits,
+/// and scales the feeds of operations that ask for it. Changes only `program`'s feeds.
+fn check_program(s: &Session, setup: &CamSetup, program: &mut Program) -> std::result::Result<Checked, String> {
+    let cam = &s.doc.cam;
+    let material = match &setup.material {
+        Some(m) => Some(cam.material(m).ok_or_else(|| format!("setup `{}` names material `{m}`, which is not defined", setup.name))?),
+        None => None,
+    };
+    let machine = setup.machine.as_deref().and_then(|m| cam.machine(m));
+    if let Some(m) = material {
+        m.validate().map_err(|e| e.to_string())?;
+    }
+    if let Some(m) = machine {
+        m.validate().map_err(|e| e.to_string())?;
+    }
+    let stock = match setup.stock {
+        Some(b) => {
+            StockBounds { min: Vec3::new(b.min[0], b.min[1], b.min[2]), max: Vec3::new(b.max[0], b.max[1], b.max[2]), source: Source::Measured }
+        }
+        None => stand_in_stock(s, setup, program)?,
+    };
+    let radius = program.operations.iter().map(|o| o.tool.radius()).fold(f64::INFINITY, f64::min);
+    let mut grid = Stock::new(stock, (radius / 6.0).max(0.05)).map_err(|e| e.to_string())?;
+    let mut reports = Vec::with_capacity(program.operations.len());
+    for (op, doc_op) in program.operations.iter_mut().zip(&setup.operations) {
+        let engagement = grid.cut(&op.path, &op.tool).map_err(|e| e.to_string())?;
+        let physics = doc_op.physics();
+        let confidence = physics.confidence.or(setup.confidence).unwrap_or(0.5);
+        let ctx = Context { material, machine, confidence, stock: stock.source };
+        let mut report = check_operation(op, &engagement, &ctx);
+        if physics.adapt_feed {
+            adapt_feeds(op, &report, 0.25, 2.0, 1.5);
+            report = check_operation(op, &engagement, &ctx);
+            report.notes.push("feeds scaled move by move to the binding limit".into());
+        }
+        for f in &mut report.findings {
+            f.accepted = physics.accepts(f.limit);
+        }
+        reports.push(report);
+    }
+    Ok(Checked { reports, stock, cell: grid.cell() })
+}
+
+/// A box around everything the program cuts, a tool radius wider, from its deepest cut up to
+/// the highest operation top: what the stock is at most when the setup gives none.
+fn stand_in_stock(s: &Session, setup: &CamSetup, program: &Program) -> std::result::Result<StockBounds, String> {
+    let (mut lo, mut hi) =
+        (Vec3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY), Vec3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY));
+    let mut top = f64::NEG_INFINITY;
+    for (op, doc_op) in program.operations.iter().zip(&setup.operations) {
+        let r = op.tool.radius();
+        for (p, cutting) in op.path.points(0.05) {
+            if cutting {
+                lo = lo.min(Vec3::new(p.x - r, p.y - r, p.z));
+                hi = hi.max(Vec3::new(p.x + r, p.y + r, p.z));
+            }
+        }
+        top = top.max(engine_cut(s, doc_op.cut())?.heights.top);
+    }
+    if !(lo.is_finite() && hi.is_finite() && top.is_finite()) {
+        return Err("the program cuts nothing to check".into());
+    }
+    let max = Vec3::new(hi.x, hi.y, top.max(lo.z + 1e-3));
+    Ok(StockBounds { min: Vec3::new(lo.x, lo.y, lo.z - 1e-3), max, source: Source::Assumed })
+}
+
+fn check_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.check";
+    let setup_name = str_(p, "setup").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(cmd, "`setup` is required"))?.to_string();
+    let setup = s.doc.cam.setup(&setup_name).cloned().ok_or_else(|| bad(cmd, format!("no setup `{setup_name}`")))?;
+    if setup.operations.is_empty() {
+        return Err(bad(cmd, format!("setup `{setup_name}` has no operations")));
+    }
+    let mut program = build_program(s, &setup, setup.name.clone()).map_err(|e| bad(cmd, e))?;
+    let checked = check_program(s, &setup, &mut program).map_err(|e| bad(cmd, e))?;
+    let mut out = checked.json();
+    out["setup"] = json!(setup_name);
+    Ok(out)
+}
+
+fn accept_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.finding.accept";
+    let setup_name = str_(p, "setup").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(cmd, "`setup` is required"))?.to_string();
+    let op_name = str_(p, "operation").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(cmd, "`operation` is required"))?.to_string();
+    let limit: Limit = p
+        .get("limit")
+        .cloned()
+        .ok_or_else(|| bad(cmd, "`limit` is required"))
+        .and_then(|v| serde_json::from_value(v).map_err(|_| bad(cmd, "unknown `limit` (see the command's parameters)")))?;
+    let revoke = bool_(p, "revoke").unwrap_or(false);
+    let reason = str_(p, "reason").map(str::trim).unwrap_or("").to_string();
+    if !revoke && (reason.is_empty() || reason.len() > 512) {
+        return Err(bad(cmd, "`reason` is required (1 to 512 characters): it is written into the G-code"));
+    }
+    let doc = s.doc_mut();
+    let setup = doc.cam.setup_mut(&setup_name).ok_or_else(|| bad(cmd, format!("no setup `{setup_name}`")))?;
+    let op = setup.operations.iter_mut().find(|o| o.name() == op_name).ok_or_else(|| bad(cmd, format!("no operation `{op_name}`")))?;
+    let physics = op.physics_mut();
+    physics.accepted.retain(|a| a.limit != limit);
+    if !revoke {
+        if physics.accepted.len() >= MAX_ACCEPTED {
+            return Err(bad(cmd, format!("an operation has at most {MAX_ACCEPTED} accepted findings")));
+        }
+        physics.accepted.push(AcceptedFinding { limit, reason });
+    }
+    Ok(json!({"setup": setup_name, "operation": op_name, "accepted": physics.accepted}))
+}
+
+fn library_name(cmd: &str, p: &Value) -> Result<String> {
+    str_(p, "name").map(str::trim).filter(|n| !n.is_empty() && n.len() <= 128).map(str::to_string).ok_or_else(|| bad(cmd, "`name` is required"))
+}
+
+fn material_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.material.define";
+    let name = library_name(cmd, p)?;
+    let mut v = p.clone();
+    v["name"] = json!(name);
+    let material: Material = serde_json::from_value(v).map_err(|e| bad(cmd, format!("bad material: {e}")))?;
+    material.validate().map_err(|e| bad(cmd, e.to_string()))?;
+    let list = &mut s.doc_mut().cam.materials;
+    let full = list.len() >= MAX_LIBRARY;
+    match list.iter_mut().find(|m| m.name == name) {
+        Some(slot) => *slot = material.clone(),
+        None if full => return Err(bad(cmd, format!("a design has at most {MAX_LIBRARY} materials"))),
+        None => list.push(material.clone()),
+    }
+    Ok(json!({"material": material}))
+}
+
+fn material_remove(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.material.remove";
+    let name = library_name(cmd, p)?;
+    if s.doc.cam.setups.iter().any(|st| st.material.as_deref() == Some(name.as_str())) {
+        return Err(bad(cmd, format!("material `{name}` is used by a setup")));
+    }
+    let doc = s.doc_mut();
+    let before = doc.cam.materials.len();
+    doc.cam.materials.retain(|m| m.name != name);
+    if doc.cam.materials.len() == before {
+        return Err(bad(cmd, format!("no material `{name}`")));
+    }
+    Ok(json!({"deleted": name}))
+}
+
+fn machine_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.machine.define";
+    let name = library_name(cmd, p)?;
+    let mut v = p.clone();
+    v["name"] = json!(name);
+    let machine: Machine = serde_json::from_value(v).map_err(|e| bad(cmd, format!("bad machine: {e}")))?;
+    machine.validate().map_err(|e| bad(cmd, e.to_string()))?;
+    let list = &mut s.doc_mut().cam.machines;
+    let full = list.len() >= MAX_LIBRARY;
+    match list.iter_mut().find(|m| m.name == name) {
+        Some(slot) => *slot = machine.clone(),
+        None if full => return Err(bad(cmd, format!("a design has at most {MAX_LIBRARY} machines"))),
+        None => list.push(machine.clone()),
+    }
+    Ok(json!({"machine": machine}))
+}
+
+fn machine_remove(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.machine.remove";
+    let name = library_name(cmd, p)?;
+    let doc = s.doc_mut();
+    let before = doc.cam.machines.len();
+    doc.cam.machines.retain(|m| m.name != name);
+    if doc.cam.machines.len() == before {
+        return Err(bad(cmd, format!("no machine `{name}`")));
+    }
+    Ok(json!({"deleted": name}))
 }
 
 fn resolve_post(cam: &CamSettings, name: &str) -> std::result::Result<Post, String> {
@@ -742,6 +1015,8 @@ fn list_cmd(s: &mut Session, _p: &Value) -> Result<Value> {
         "tools": s.doc.cam.tools,
         "setups": s.doc.cam.setups.iter().map(setup_json).collect::<Vec<_>>(),
         "posts": s.doc.cam.posts.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
+        "materials": s.doc.cam.materials,
+        "machines": s.doc.cam.machines,
         "builtin_posts": Post::BUILTIN,
     }))
 }
@@ -757,14 +1032,17 @@ fn setup_json(setup: &CamSetup) -> Value {
         "stock_spec": setup.stock_spec,
         "wcs": setup.wcs,
         "model_bodies": setup.model_bodies,
+        "machine": setup.machine,
+        "material": setup.material,
+        "confidence": setup.confidence,
         "operations": setup.operations.iter().map(|op| match op {
-            CamOperation::Contour { name, tool, geometry, params, cut, spindle_rpm, coolant } => json!({
+            CamOperation::Contour { name, tool, geometry, params, cut, spindle_rpm, coolant, physics } => json!({
                 "type": "contour", "name": name, "tool": tool, "geometry": geometry,
-                "params": params, "cut": cut, "spindle_rpm": spindle_rpm, "coolant": coolant,
+                "params": params, "cut": cut, "spindle_rpm": spindle_rpm, "coolant": coolant, "physics": physics,
             }),
-            CamOperation::Pocket { name, tool, geometry, params, cut, spindle_rpm, coolant } => json!({
+            CamOperation::Pocket { name, tool, geometry, params, cut, spindle_rpm, coolant, physics } => json!({
                 "type": "pocket", "name": name, "tool": tool, "geometry": geometry,
-                "params": params, "cut": cut, "spindle_rpm": spindle_rpm, "coolant": coolant,
+                "params": params, "cut": cut, "spindle_rpm": spindle_rpm, "coolant": coolant, "physics": physics,
             }),
         }).collect::<Vec<_>>(),
     })
@@ -1002,5 +1280,128 @@ mod tests {
         let gcode = posted["gcode"].as_str().unwrap();
         assert!(gcode.contains("G2 ") || gcode.contains("G3 "), "{gcode}");
         assert!(posted["readback"]["within"].as_bool().unwrap());
+    }
+
+    /// A steel block with a 6 mm pocket on a spindle of `watts` (flat curve), all measured.
+    fn physics_design(watts: f64) -> Session {
+        let mut s = Session::default();
+        run(
+            &mut s,
+            "cam.tool.define",
+            json!({"number": 1, "diameter": 6, "flute_length": 20, "spindle_rpm": 10000, "feed": 1000, "plunge_feed": 200, "stepdown": 3,
+                   "physical": {"stick_out": 20, "material": "carbide", "source": "measured"}}),
+        );
+        run(&mut s, "cam.material.define", json!({"name": "1045", "group": "P", "kc11": 1700, "mc": 0.25, "source": "measured"}));
+        run(
+            &mut s,
+            "cam.machine.define",
+            json!({"name": "mill", "max_rpm": 24000, "source": "measured",
+                   "spindle": [{"rpm": 1000, "power": watts, "torque": 50}, {"rpm": 24000, "power": watts, "torque": 50}]}),
+        );
+        run(&mut s, "cam.setup", json!({"name": "Top", "stock": {"min": [0, 0, -10], "max": [40, 30, 0]}, "material": "1045", "machine": "mill"}));
+        run(
+            &mut s,
+            "cam.op.pocket",
+            json!({"setup": "Top", "name": "Pocket", "tool": 1, "outer": [[5,5],[35,5],[35,25],[5,25]], "stepover": 2.5, "bottom": -3, "stepdown": 3}),
+        );
+        s
+    }
+
+    #[test]
+    fn a_post_over_the_spindle_is_refused_until_the_finding_is_accepted() {
+        let mut s = physics_design(300.0);
+        let checked = run(&mut s, "cam.check", json!({"setup": "Top"}));
+        assert_eq!(checked["worst"], "stop");
+        let findings = checked["operations"][0]["findings"].as_array().unwrap();
+        assert!(findings.iter().any(|f| f["limit"] == "spindle_power" && f["severity"] == "stop"), "{findings:?}");
+        let err = s.execute("cam.post", &json!({"setup": "Top"})).unwrap_err().to_string();
+        assert!(err.contains("spindle power"), "{err}");
+        assert!(
+            s.execute("cam.finding.accept", &json!({"setup": "Top", "operation": "Pocket", "limit": "spindle_power"})).is_err(),
+            "a reason is required"
+        );
+        run(
+            &mut s,
+            "cam.finding.accept",
+            json!({"setup": "Top", "operation": "Pocket", "limit": "spindle_power", "reason": "light finish, watched"}),
+        );
+        run(&mut s, "cam.finding.accept", json!({"setup": "Top", "operation": "Pocket", "limit": "spindle_torque", "reason": "same cut"}));
+        let posted = run(&mut s, "cam.post", json!({"setup": "Top"}));
+        let gcode = posted["gcode"].as_str().unwrap();
+        assert!(gcode.contains("accepted in Pocket: spindle power, reason: light finish, watched"), "{gcode}");
+        // The acceptance lives in the design and survives a save.
+        let cold = solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap();
+        assert!(cold.cam.setups[0].operations[0].physics().accepts(Limit::SpindlePower));
+        run(&mut s, "cam.finding.accept", json!({"setup": "Top", "operation": "Pocket", "limit": "spindle_power", "revoke": true}));
+        assert!(s.execute("cam.post", &json!({"setup": "Top"})).is_err());
+    }
+
+    #[test]
+    fn a_strong_spindle_posts_and_reports_the_limits() {
+        let mut s = physics_design(20_000.0);
+        let posted = run(&mut s, "cam.post", json!({"setup": "Top"}));
+        let ops = posted["limits"]["operations"].as_array().unwrap();
+        assert!(ops[0]["peak_power"].as_f64().unwrap() > 0.0);
+        assert_eq!(posted["limits"]["stock"]["source"], "measured");
+    }
+
+    #[test]
+    fn without_physical_data_the_check_only_notes_what_it_skipped() {
+        let mut s = Session::default();
+        run(&mut s, "cam.tool.define", json!({"number": 1, "diameter": 6, "flute_length": 20, "feed": 600, "plunge_feed": 200, "stepdown": 3}));
+        run(&mut s, "cam.setup", json!({"name": "Top"}));
+        run(&mut s, "cam.op.pocket", json!({"setup": "Top", "name": "P", "tool": 1, "outer": [[5,5],[35,5],[35,25],[5,25]], "bottom": -3}));
+        let checked = run(&mut s, "cam.check", json!({"setup": "Top"}));
+        assert_ne!(checked["worst"], "stop");
+        let notes = checked["operations"][0]["notes"].as_array().unwrap();
+        assert!(notes.iter().any(|n| n.as_str().unwrap().contains("no material")), "{notes:?}");
+        assert_eq!(checked["stock"]["source"], "assumed");
+        run(&mut s, "cam.post", json!({"setup": "Top"}));
+    }
+
+    #[test]
+    fn adapted_feeds_change_the_written_feeds() {
+        let mut s = physics_design(1500.0);
+        let plain = run(&mut s, "cam.post", json!({"setup": "Top"}));
+        run(
+            &mut s,
+            "cam.op.pocket",
+            json!({"setup": "Top", "name": "Pocket", "tool": 1, "outer": [[5,5],[35,5],[35,25],[5,25]], "stepover": 2.5, "bottom": -3,
+                   "stepdown": 3, "adapt_feed": true}),
+        );
+        let adapted = run(&mut s, "cam.post", json!({"setup": "Top"}));
+        assert_ne!(plain["gcode"], adapted["gcode"]);
+        assert!(adapted["readback"]["within"].as_bool().unwrap());
+        let ops = adapted["limits"]["operations"].as_array().unwrap();
+        assert!(ops[0]["findings"].as_array().unwrap().iter().all(|f| f["severity"] != "stop"), "{ops:?}");
+    }
+
+    #[test]
+    fn materials_machines_and_tool_physics_are_checked_and_kept() {
+        let mut s = physics_design(20_000.0);
+        assert!(s.execute("cam.material.define", &json!({"name": "x", "group": "Q"})).is_err());
+        assert!(s.execute("cam.material.define", &json!({"name": "x", "group": "N", "kc11": -5})).is_err());
+        assert!(
+            s.execute(
+                "cam.machine.define",
+                &json!({"name": "m", "spindle": [{"rpm": 5000, "power": 1, "torque": 1}, {"rpm": 10, "power": 1, "torque": 1}]})
+            )
+            .is_err()
+        );
+        assert!(s.execute("cam.material.remove", &json!({"name": "1045"})).is_err(), "in use");
+        assert!(s.execute("cam.setup", &json!({"name": "Top", "material": "nothing"})).is_err());
+        assert!(s.execute("cam.setup", &json!({"name": "Top", "confidence": 3})).is_err());
+        assert!(s.execute("cam.tool.define", &json!({"number": 1, "diameter": 6, "flute_length": 20, "physical": {"runout": 9}})).is_err());
+        // Redefining the tool without `physical` keeps its physical data.
+        run(&mut s, "cam.tool.define", json!({"number": 1, "diameter": 6, "flute_length": 20, "feed": 900}));
+        assert_eq!(s.doc.cam.tools[0].physical.stick_out, Some(20.0));
+        let listed = run(&mut s, "cam.list", json!({}));
+        assert_eq!(listed["materials"][0]["name"], "1045");
+        assert_eq!(listed["setups"][0]["material"], "1045");
+        run(&mut s, "cam.machine.remove", json!({"name": "mill"}));
+        // A setup naming a machine that is not defined is still checked, without the spindle.
+        let checked = run(&mut s, "cam.check", json!({"setup": "Top"}));
+        let notes = checked["operations"][0]["notes"].as_array().unwrap();
+        assert!(notes.iter().any(|n| n.as_str().unwrap().contains("no machine")), "{notes:?}");
     }
 }

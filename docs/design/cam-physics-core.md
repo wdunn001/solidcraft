@@ -1,8 +1,39 @@
 # CAM physics core plan
 
-Status is plan only. Nothing is built yet. Follows the research on #1621 (nsnlookupjn, "the CAM Physics
+Status: phases 0 to 4 are built on `feat/cam-physics-core` (see "What was built" below). The UI
+work in the last part is open. Follows the research on #1621 (nsnlookupjn, "the CAM Physics
 System") and builds on #5751 (`solidcraft-cam`) and #2881 (the `cam` design field and `cam.*`
 commands).
+
+## What was built, and where it differs from the plan
+
+- **Phase 0.** The tool's physical data is one optional `physical` block on `Tool` (corner
+  radius, shank, stick-out, tool material, helix, holder, limits, catalogue reference, wear,
+  runout, source). `Material` and `Machine` live in `solidcraft-cam` (`material.rs`,
+  `machine.rs`); the design holds `materials` and `machines`, and a setup names its `material`
+  and `machine` and sets `confidence`. An operation's `physics` holds its own confidence,
+  accepted findings and `adapt_feed`. Commands: `cam.material.define`/`remove`,
+  `cam.machine.define`/`remove`, `cam.tool.define` takes `physical`, `cam.setup` takes
+  `material`, `machine`, `confidence`.
+- **Phase 1, changed.** Engagement is measured, not reported by each generator: `Stock`
+  (`engage.rs`) is a height field over the stock box, and every move of every operation is cut
+  through it in order. Each move gets its radial width and axial depth at its worst point and a
+  kind (side, slot, ramp, plunge, rapid). This judges contours, pockets, hand-made paths and
+  read-back G-code the same way, and a new generator needs no engagement code of its own.
+  Without a stock box the check uses a box around the toolpaths and says the stock is assumed.
+- **Phase 2.** `limits.rs`: Kienzle forces with the side-milling mean chip thickness, spindle
+  power and torque against the machine's curve, spindle and holder speed, machine feed, tool
+  torque, force and deflection, rubbing, and rapids in material. `cam.check` returns the
+  findings, the binding limit, peaks, and notes on what was not checked.
+- **Phase 3.** `cam.post` checks the program it writes and refuses it on a stop finding.
+  `cam.finding.accept {setup, operation, limit, reason}` lets one limit through on one
+  operation (`revoke` takes it back); every accepted finding is written as a comment in the
+  G-code header. Checks resting on an assumed input never stop.
+- **Phase 4.** `adapt_feed` on an operation scales each cutting move's feed to its binding
+  limit, between 0.25 and 2 times the programmed feed, never faster than programmed when the
+  limit rests on an assumption, smoothed so neighbouring moves differ by at most 1.5 times.
+- **Not done yet.** Input and output schemas for the `cam.*` commands (none of them have
+  schemas yet, #2881's included); one follow-up should add them for all `cam.*` commands at once.
 
 ## Goal
 

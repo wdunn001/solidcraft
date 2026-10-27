@@ -13,6 +13,8 @@ use crate::{CamError, Result, invalid};
 const MAX_OPERATIONS: usize = 10_000;
 /// Most lines [`parse`] reads.
 const MAX_LINES: usize = 5_000_000;
+/// Most notes in a program's header.
+const MAX_NOTES: usize = 64;
 /// Longest comment written.
 const MAX_COMMENT: usize = 80;
 
@@ -34,6 +36,10 @@ pub struct Program {
     /// Work offset 1 to 6 (`G54` to `G59`); left out, the first.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_offset: Option<u8>,
+    /// Lines written as comments after the program name: what a reader of the program must know,
+    /// such as the limits the user accepted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 /// The code of work offset `n` (1 to 6): `G54` to `G59`.
@@ -233,6 +239,12 @@ pub fn emit(program: &Program, post: &Post) -> Result<String> {
     let mut values =
         Values { program: plain(&program.name), units: post.units.code().into(), work_offset: work_offset_code(offset)?, ..Values::default() };
     w.comment(&program.name);
+    if program.notes.len() > MAX_NOTES {
+        return Err(CamError::TooLarge(format!("more than {MAX_NOTES} program notes")));
+    }
+    for note in &program.notes {
+        w.comment(note);
+    }
     w.template(&post.header, &values)?;
     let mut tool: Option<u32> = None;
     let mut rpm: Option<String> = None;

@@ -6,7 +6,7 @@
 //! values, mapped onto `solidcraft-cam` only at post time.
 
 use serde::{Deserialize, Serialize};
-use solidcraft_cam::{Post, Tool};
+use solidcraft_cam::{Limit, Machine, Material, Post, Tool};
 use solidcraft_geom::{Loop2, Region2, Vec2, Vec3};
 
 use crate::{DocError, Expr, ProfileSel, Result};
@@ -23,6 +23,10 @@ pub const MAX_LOOP_POINTS: usize = 10_000;
 pub const MAX_HOLES: usize = 1_000;
 /// Most regions in one operation.
 pub const MAX_REGIONS: usize = 256;
+/// Most materials, and most machines, in one design.
+pub const MAX_LIBRARY: usize = 64;
+/// Most accepted findings on one operation.
+pub const MAX_ACCEPTED: usize = 32;
 
 /// The design's CAM data: tools, setups and optional named posts.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -34,11 +38,25 @@ pub struct CamSettings {
     /// Named posts saved with the design. Absent means the built-in RS-274 post at post time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub posts: Vec<Post>,
+    /// Workpiece materials a setup can name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub materials: Vec<Material>,
+    /// Machines a setup can name, as the limits see them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machines: Vec<Machine>,
 }
 
 impl CamSettings {
     pub fn is_empty(&self) -> bool {
-        self.tools.is_empty() && self.setups.is_empty() && self.posts.is_empty()
+        self.tools.is_empty() && self.setups.is_empty() && self.posts.is_empty() && self.materials.is_empty() && self.machines.is_empty()
+    }
+
+    pub fn material(&self, name: &str) -> Option<&Material> {
+        self.materials.iter().find(|m| m.name == name)
+    }
+
+    pub fn machine(&self, name: &str) -> Option<&Machine> {
+        self.machines.iter().find(|m| m.name == name)
     }
 
     pub fn tool(&self, number: u32) -> Option<&Tool> {
@@ -111,10 +129,18 @@ pub struct CamSetup {
     pub operation_type: SetupOperationType,
     #[serde(default, skip_serializing_if = "is_default_post_opts")]
     pub post_opts: SetupPostOpts,
+    /// The machine, by name. When it names one of [`CamSettings::machines`] the limits check
+    /// against it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub machine: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post: Option<String>,
+    /// The stock's material: a name in [`CamSettings::materials`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    /// How far to trust the data, 0 (conservative) to 1 (aggressive); absent, 0.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub operations: Vec<CamOperation>,
 }
@@ -160,6 +186,8 @@ impl CamSetup {
             post_opts: SetupPostOpts::default(),
             machine: None,
             post: None,
+            material: None,
+            confidence: None,
             operations: Vec::new(),
         }
     }
@@ -192,6 +220,7 @@ impl CamSetup {
         if self.operations.len() > MAX_OPS {
             return Err(DocError::Invalid(format!("a CAM setup has at most {MAX_OPS} operations")));
         }
+        check_confidence(self.confidence)?;
         if self.model_bodies.len() > 256 {
             return Err(DocError::Invalid("a CAM setup has at most 256 model bodies".into()));
         }
@@ -310,7 +339,7 @@ impl CamStock {
     }
 
     pub fn validate(&self) -> Result<()> {
-        let ok = |n: f64| n.is_finite() && n >= 0.0 && n <= 1.0e6;
+        let ok = |n: f64| (0.0..=1.0e6).contains(&n);
         match self {
             CamStock::Box { width, depth, height } if ok(*width) && *width > 0.0 && ok(*depth) && *depth > 0.0 && ok(*height) && *height > 0.0 => {
                 Ok(())
@@ -741,6 +770,8 @@ pub enum CamOperation {
         spindle_rpm: Option<f64>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         coolant: bool,
+        #[serde(default, skip_serializing_if = "OpPhysics::is_empty")]
+        physics: OpPhysics,
     },
     Pocket {
         name: String,
@@ -752,6 +783,8 @@ pub enum CamOperation {
         spindle_rpm: Option<f64>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         coolant: bool,
+        #[serde(default, skip_serializing_if = "OpPhysics::is_empty")]
+        physics: OpPhysics,
     },
 }
 
@@ -774,6 +807,18 @@ impl CamOperation {
         }
     }
 
+    pub fn physics(&self) -> &OpPhysics {
+        match self {
+            CamOperation::Contour { physics, .. } | CamOperation::Pocket { physics, .. } => physics,
+        }
+    }
+
+    pub fn physics_mut(&mut self) -> &mut OpPhysics {
+        match self {
+            CamOperation::Contour { physics, .. } | CamOperation::Pocket { physics, .. } => physics,
+        }
+    }
+
     pub fn cut(&self) -> &CamCut {
         match self {
             CamOperation::Contour { cut, .. } | CamOperation::Pocket { cut, .. } => cut,
@@ -786,6 +831,7 @@ impl CamOperation {
             return Err(DocError::Invalid("a CAM operation name must be 1 to 128 characters".into()));
         }
         self.geometry().validate()?;
+        self.physics().validate()?;
         let cut = self.cut();
         check_expr(&cut.clearance, "clearance")?;
         check_expr(&cut.retract, "retract")?;
@@ -813,11 +859,60 @@ impl CamOperation {
     }
 }
 
-fn check_spindle(spindle: Option<f64>) -> Result<()> {
-    if let Some(rpm) = spindle {
-        if !(rpm > 0.0) || !rpm.is_finite() || rpm > 1.0e6 {
-            return Err(DocError::Invalid("spindle_rpm must be above 0".into()));
+fn check_confidence(c: Option<f64>) -> Result<()> {
+    match c {
+        Some(c) if !(0.0..=1.0).contains(&c) => Err(DocError::Invalid("confidence must be 0 (conservative) to 1 (aggressive)".into())),
+        _ => Ok(()),
+    }
+}
+
+/// A limit the user let through on one operation, with their reason. It is written into the
+/// G-code header when the program is posted.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AcceptedFinding {
+    pub limit: Limit,
+    pub reason: String,
+}
+
+/// What an operation adds to its cutting data: the confidence for it alone, the findings
+/// accepted on it, and whether its feed follows the limits move by move.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct OpPhysics {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accepted: Vec<AcceptedFinding>,
+    /// Scale each cutting move's feed to what its binding limit allows.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adapt_feed: bool,
+}
+
+impl OpPhysics {
+    pub fn is_empty(&self) -> bool {
+        *self == OpPhysics::default()
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        check_confidence(self.confidence)?;
+        if self.accepted.len() > MAX_ACCEPTED {
+            return Err(DocError::Invalid(format!("an operation has at most {MAX_ACCEPTED} accepted findings")));
         }
+        if self.accepted.iter().any(|a| a.reason.trim().is_empty() || a.reason.len() > 512) {
+            return Err(DocError::Invalid("an accepted finding needs a reason of 1 to 512 characters".into()));
+        }
+        Ok(())
+    }
+
+    pub fn accepts(&self, limit: Limit) -> bool {
+        self.accepted.iter().any(|a| a.limit == limit)
+    }
+}
+
+fn check_spindle(spindle: Option<f64>) -> Result<()> {
+    if let Some(rpm) = spindle
+        && (!(rpm > 0.0) || !rpm.is_finite() || rpm > 1.0e6)
+    {
+        return Err(DocError::Invalid("spindle_rpm must be above 0".into()));
     }
     Ok(())
 }

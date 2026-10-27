@@ -46,7 +46,7 @@ pub use post::{CommentStyle, LineNumbers, Post, Units};
 pub use probe::{ProbeCycle, ProbeSnippetRequest, emit_snippet, style_for_post};
 pub use readback::{Readback, allowed_deviation, readback};
 pub use thinc::ThincBackend;
-pub use tool::{Tool, ToolKind};
+pub use tool::{Tool, ToolKind, cantilever_stiffness_n_per_um, tooth_passing_hz, wall_stiffness_n_per_um, youngs_modulus_gpa};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CamError {

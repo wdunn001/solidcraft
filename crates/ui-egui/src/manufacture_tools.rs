@@ -116,6 +116,37 @@ impl ToolMaterial {
             ToolMaterial::Unknown => "Unknown",
         }
     }
+
+    fn param(self) -> &'static str {
+        match self {
+            ToolMaterial::Hss => "hss",
+            ToolMaterial::Carbide => "carbide",
+            ToolMaterial::Cobalt => "cobalt",
+            ToolMaterial::Ceramic => "ceramic",
+            ToolMaterial::Diamond => "diamond",
+            ToolMaterial::Unknown => "unknown",
+        }
+    }
+
+    fn from_param(s: &str) -> Self {
+        match s {
+            "hss" => ToolMaterial::Hss,
+            "carbide" => ToolMaterial::Carbide,
+            "cobalt" => ToolMaterial::Cobalt,
+            "ceramic" => ToolMaterial::Ceramic,
+            "diamond" => ToolMaterial::Diamond,
+            _ => ToolMaterial::Unknown,
+        }
+    }
+
+    fn youngs_gpa(self) -> f64 {
+        match self {
+            ToolMaterial::Carbide => 600.0,
+            ToolMaterial::Ceramic => 300.0,
+            ToolMaterial::Diamond => 1050.0,
+            ToolMaterial::Hss | ToolMaterial::Cobalt | ToolMaterial::Unknown => 210.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -174,6 +205,8 @@ pub struct ToolHolder {
     pub product_link: String,
     pub vendor: String,
     pub gauge_length_mm: f64,
+    /// Holder stiffness at the gauge face (N/µm). 20 is the #1621 placeholder until measured.
+    pub stiffness_n_per_um: f64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -302,6 +335,39 @@ impl Tool {
             feedrate / (f64::from(spindle_rpm) * f64::from(self.flutes))
         }
     }
+
+    fn core_diameter(&self) -> f64 {
+        if self.shaft_diameter > 0.0 { self.shaft_diameter } else { self.diameter * 0.8 }
+    }
+
+    fn youngs_gpa(&self) -> f64 {
+        self.material.youngs_gpa()
+    }
+
+    /// Cantilever `k = 3EI/L³` in N/µm. Stick-out is length below holder.
+    pub fn stiffness_n_per_um(&self) -> f64 {
+        let l = self.length_below_holder.max(0.1);
+        let d = self.core_diameter().max(0.1);
+        let e = self.youngs_gpa() * 1_000.0;
+        let i = std::f64::consts::PI / 64.0 * d.powi(4);
+        (3.0 * e * i / l.powi(3)) / 1_000.0
+    }
+
+    pub fn assembly_stiffness_n_per_um(&self) -> f64 {
+        let k_tool = self.stiffness_n_per_um();
+        match self.holder.as_ref().map(|h| h.stiffness_n_per_um).filter(|k| *k > 0.0) {
+            Some(k_holder) => 1.0 / (1.0 / k_tool.max(1e-9) + 1.0 / k_holder),
+            None => k_tool,
+        }
+    }
+
+    pub fn tooth_passing_hz(&self, spindle_rpm: u32) -> f64 {
+        if spindle_rpm == 0 || self.flutes == 0 {
+            0.0
+        } else {
+            f64::from(spindle_rpm) * f64::from(self.flutes) / 60.0
+        }
+    }
 }
 
 use crate::SolveApp;
@@ -316,12 +382,20 @@ pub enum EditToolTab {
     Shaft,
     Holder,
     CuttingData,
+    Physics,
     PostProcessor,
 }
 
 impl EditToolTab {
-    const ALL: &'static [EditToolTab] =
-        &[EditToolTab::General, EditToolTab::Cutter, EditToolTab::Shaft, EditToolTab::Holder, EditToolTab::CuttingData, EditToolTab::PostProcessor];
+    const ALL: &'static [EditToolTab] = &[
+        EditToolTab::General,
+        EditToolTab::Cutter,
+        EditToolTab::Shaft,
+        EditToolTab::Holder,
+        EditToolTab::CuttingData,
+        EditToolTab::Physics,
+        EditToolTab::PostProcessor,
+    ];
 
     fn label(self) -> &'static str {
         match self {
@@ -330,6 +404,7 @@ impl EditToolTab {
             EditToolTab::Shaft => "Shaft",
             EditToolTab::Holder => "Holder",
             EditToolTab::CuttingData => "Cutting data",
+            EditToolTab::Physics => "Physics",
             EditToolTab::PostProcessor => "Post processor",
         }
     }
@@ -517,12 +592,13 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
                         tools.iter().enumerate().filter(|(_, t)| matches_filter(t, st.category, &st.search)).collect();
 
                     egui::ScrollArea::both().id_salt("mfg_tl_list").max_height(240.0).show(ui, |ui| {
-                        egui::Grid::new("mfg_tl_grid").striped(true).num_columns(5).show(ui, |ui| {
+                        egui::Grid::new("mfg_tl_grid").striped(true).num_columns(6).show(ui, |ui| {
                             ui.strong("Name");
                             ui.strong("Diameter");
                             ui.strong("Flute length");
                             ui.strong("Overall length");
                             ui.strong("Type");
+                            ui.strong("Stiffness");
                             ui.end_row();
                             for (i, t) in &filtered {
                                 let sel = st.selected == Some(*i);
@@ -533,6 +609,7 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
                                 ui.label(format!("{:.2} mm", t.flute_length));
                                 ui.label(format!("{:.1} mm", t.length));
                                 ui.label(t.kind.label());
+                                ui.label(format!("{:.1} N/µm", t.assembly_stiffness_n_per_um()));
                                 ui.end_row();
                             }
                         });
@@ -597,6 +674,8 @@ fn show_tool_library(app: &mut SolveApp, ui: &mut egui::Ui) {
                                 ui.label(format!("Length below holder: {:.2} mm", t.length_below_holder));
                                 ui.label(format!("Shoulder length: {:.2} mm", t.shoulder_length));
                                 ui.label(format!("Flute length: {:.2} mm", t.flute_length));
+                                ui.label(format!("Estimated tool stiffness: {:.2} N/µm", t.stiffness_n_per_um()));
+                                ui.label(format!("Assembly stiffness: {:.2} N/µm", t.assembly_stiffness_n_per_um()));
                             }
                         } else {
                             ui.label("Select a tool");
@@ -707,6 +786,7 @@ fn show_edit_tool(app: &mut SolveApp, ui: &mut egui::Ui) {
                         EditToolTab::CuttingData => {
                             tab_cutting_data(ui, &mut st.draft, &mut st.selected_preset);
                         }
+                        EditToolTab::Physics => tab_physics(ui, &mut st.draft),
                         EditToolTab::PostProcessor => tab_post(ui, &mut st.draft),
                     }
                 });
@@ -839,6 +919,7 @@ fn tab_holder(ui: &mut egui::Ui, t: &mut Tool) {
                 product_link: String::new(),
                 vendor: "Generic".into(),
                 gauge_length_mm: t.gauge_length.max(60.0),
+                stiffness_n_per_um: 20.0,
             });
         }
         if ui.add_enabled(t.holder.is_some(), egui::Button::new("Remove holder")).clicked() {
@@ -852,6 +933,10 @@ fn tab_holder(ui: &mut egui::Ui, t: &mut Tool) {
         labeled_text(ui, "Product link", &mut h.product_link);
         labeled_text(ui, "Vendor", &mut h.vendor);
         drag_mm(ui, "Gauge length", &mut h.gauge_length_mm, 0.1, 0.0..=2000.0);
+        ui.horizontal(|ui| {
+            ui.label("Holder stiffness");
+            ui.add(egui::DragValue::new(&mut h.stiffness_n_per_um).speed(0.1).suffix(" N/µm").range(0.0..=1_000.0));
+        });
         t.gauge_length = h.gauge_length_mm;
     } else {
         ui.label("No holder assigned.");
@@ -907,6 +992,7 @@ fn tab_cutting_data(ui: &mut egui::Ui, t: &mut Tool, selected: &mut Option<usize
             }
             let surface = t.surface_speed_m_min(t.cutting_presets[i].spindle_rpm);
             let fpt = t.feed_per_tooth(t.cutting_presets[i].cutting_feedrate, t.cutting_presets[i].spindle_rpm);
+            let ftp = t.tooth_passing_hz(t.cutting_presets[i].spindle_rpm);
             let p = &mut t.cutting_presets[i];
             labeled_text(ui, "Name", &mut p.name);
             ui.separator();
@@ -916,6 +1002,7 @@ fn tab_cutting_data(ui: &mut egui::Ui, t: &mut Tool, selected: &mut Option<usize
                 ui.add(egui::DragValue::new(&mut p.spindle_rpm).speed(100).suffix(" rpm").range(1..=120_000));
             });
             ui.label(format!("Surface speed: {:.5} m/min", surface));
+            ui.label(format!("Tooth-passing frequency: {:.0} Hz", ftp));
             ui.separator();
             ui.label(RichText::new("Feedrates").strong());
             drag_mm(ui, "Cutting feedrate", &mut p.cutting_feedrate, 1.0, 0.1..=50_000.0);
@@ -957,6 +1044,46 @@ fn tab_cutting_data(ui: &mut egui::Ui, t: &mut Tool, selected: &mut Option<usize
             });
         });
     });
+}
+
+fn tab_physics(ui: &mut egui::Ui, t: &mut Tool) {
+    ui.label(RichText::new("Compliance chain").strong());
+    drag_mm(ui, "Stick-out", &mut t.length_below_holder, 0.1, 0.0..=1000.0);
+    drag_mm(ui, "Core diameter", &mut t.shaft_diameter, 0.01, 0.0..=500.0);
+    ui.label(format!("Young's modulus: {:.0} GPa", t.youngs_gpa()));
+    let k_tool = t.stiffness_n_per_um();
+    ui.label(format!("Estimated tool stiffness: {:.2} N/µm", k_tool));
+    if let Some(h) = t.holder.as_mut() {
+        ui.horizontal(|ui| {
+            ui.label("Holder stiffness");
+            ui.add(egui::DragValue::new(&mut h.stiffness_n_per_um).speed(0.1).suffix(" N/µm").range(0.0..=1_000.0));
+        });
+    } else {
+        ui.label("No holder assigned.");
+    }
+    if t.holder.is_some() {
+        ui.label(format!("Assembly stiffness: {:.2} N/µm", t.assembly_stiffness_n_per_um()));
+    }
+    let defl_mm = if k_tool > 1e-9 { 100.0 / (k_tool * 1_000.0) } else { 0.0 };
+    ui.label(format!("Deflection at 100 N: {:.3} mm", defl_mm));
+    let e = t.youngs_gpa() * 1_000.0;
+    let i = std::f64::consts::PI / 64.0 * t.core_diameter().max(0.1).powi(4);
+    let k_allow_n_per_mm = 100.0 / 0.05;
+    let max_stick = ((3.0 * e * i) / k_allow_n_per_mm).cbrt();
+    ui.label(format!("Max stick-out for 0.05 mm at 100 N: {:.1} mm", max_stick));
+    if k_tool < 2.0 {
+        ui.label("This assembly is the likely weak link on thin walls. Shorten stick-out or finish those walls last.");
+    }
+    ui.separator();
+    ui.label(RichText::new("Cutting").strong());
+    if let Some(p) = t.cutting_presets.first() {
+        ui.label(format!("Tooth-passing frequency: {:.0} Hz", t.tooth_passing_hz(p.spindle_rpm)));
+    } else {
+        ui.label("Add a cutting-data preset to see tooth-passing frequency.");
+    }
+    ui.separator();
+    ui.label("Finish thin walls in alternating bands from the top down. Lower feed last.");
+    ui.label("Re-clamp at lower torque after roughing.");
 }
 
 fn tab_post(ui: &mut egui::Ui, t: &mut Tool) {
@@ -1088,7 +1215,19 @@ fn persist_tool(app: &mut SolveApp, t: &Tool) -> bool {
         "flute_length": t.flute_length,
         "description": t.description,
         "flutes": t.flutes,
+        "stick_out": t.length_below_holder,
+        "shaft_diameter": t.shaft_diameter,
+        "material": t.material.param(),
     });
+    if t.gauge_length > 0.0 {
+        params["holder_gauge"] = json!(t.gauge_length);
+    }
+    if let Some(h) = t.holder.as_ref()
+        && h.stiffness_n_per_um > 0.0
+    {
+        params["holder_stiffness"] = json!(h.stiffness_n_per_um);
+        params["holder_gauge"] = json!(h.gauge_length_mm);
+    }
     if let Some(p) = preset {
         params["spindle_rpm"] = json!(p.spindle_rpm);
         params["feed"] = json!(p.cutting_feedrate);
@@ -1140,8 +1279,22 @@ fn ui_tools(app: &SolveApp) -> Vec<Tool> {
                 flutes: t.flutes.min(255) as u8,
                 length_offset: t.number,
                 diameter_offset: t.number,
+                length_below_holder: t.stick_out.unwrap_or(30.0),
+                shaft_diameter: t.shaft_diameter.unwrap_or(t.diameter),
+                material: t.material.as_deref().map(ToolMaterial::from_param).unwrap_or(ToolMaterial::Carbide),
+                gauge_length: t.holder_gauge.unwrap_or(80.0),
                 ..Tool::default()
             };
+            if let Some(k) = t.holder_stiffness.filter(|k| *k > 0.0) {
+                draft.holder = Some(ToolHolder {
+                    description: String::new(),
+                    product_id: String::new(),
+                    product_link: String::new(),
+                    vendor: String::new(),
+                    gauge_length_mm: t.holder_gauge.unwrap_or(draft.gauge_length),
+                    stiffness_n_per_um: k,
+                });
+            }
             if t.spindle_rpm.is_some() || t.feed.is_some() {
                 let mut p = CuttingPreset::default();
                 if let Some(rpm) = t.spindle_rpm {
@@ -1166,4 +1319,23 @@ fn ui_tools(app: &SolveApp) -> Vec<Tool> {
             draft
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn carbide_stick_out_stiffness_matches_stock_integrity_example() {
+        let t = Tool {
+            diameter: 10.0,
+            shaft_diameter: 8.0,
+            length_below_holder: 30.0,
+            material: ToolMaterial::Carbide,
+            ..Tool::default()
+        };
+        let k = t.stiffness_n_per_um();
+        assert!((k - 13.4).abs() < 0.1, "{k}");
+        assert!((t.tooth_passing_hz(12_000) - 800.0).abs() < 1e-9);
+    }
 }

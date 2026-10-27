@@ -10,11 +10,19 @@
 //! from the offset side get a joining arc, the pieces are cut where they cross, and a piece is
 //! kept when its midpoint is no closer to the boundary than the offset distance. Lines and
 //! arcs stay lines and arcs, so walls come out as straight moves and true arcs.
+//!
+//! The physics: [`Stock`] measures how much material each move engages, and [`limits`] checks
+//! every cutting move against the tool, the spindle and the machine, naming the limit that sets
+//! the feed.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 mod check;
+mod engage;
 mod gcode;
+pub mod limits;
+mod machine;
+mod material;
 mod offset;
 mod ops;
 mod path;
@@ -24,13 +32,17 @@ mod readback;
 mod tool;
 
 pub use check::verify;
+pub use engage::{Engagement, EngagementKind, MAX_CELLS, Stock, StockBounds};
 pub use gcode::{Operation, Program, emit, parse, work_offset_code};
+pub use limits::{Context, Finding, Limit, OpReport, Severity, adapt_feeds, check_operation};
+pub use machine::{Machine, SpindlePoint};
+pub use material::{IsoGroup, Material};
 pub use offset::offset_regions;
 pub use ops::{ContourParams, Cut, Feeds, Heights, PocketParams, Side, contour, pocket};
 pub use path::{Move, PathStats, Toolpath, arc_sweep};
 pub use post::{CommentStyle, LineNumbers, Post, Units};
 pub use readback::{Readback, allowed_deviation, readback};
-pub use tool::{Tool, ToolKind};
+pub use tool::{CatalogueRef, Holder, Physical, Source, Tool, ToolKind, ToolLimits, ToolMaterial};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CamError {

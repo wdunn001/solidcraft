@@ -660,3 +660,308 @@ fn work_offsets_go_where_the_post_writes_them() {
     }
     assert_eq!(work_offset_code(6).unwrap(), "G59");
 }
+
+// Physics: engagement measured on the stock, and the limits engine.
+
+fn rapid(x: f64, y: f64, z: f64) -> Move {
+    Move::Rapid { to: Vec3::new(x, y, z) }
+}
+
+fn feed(x: f64, y: f64, z: f64) -> Move {
+    Move::Feed { to: Vec3::new(x, y, z), feed: 1000.0 }
+}
+
+fn block(source: Source) -> StockBounds {
+    StockBounds { min: Vec3::new(0.0, 0.0, -10.0), max: Vec3::new(40.0, 30.0, 0.0), source }
+}
+
+/// Two passes along X at depth 2: the first a full slot, the second 3 mm over, half a tool in.
+fn slot_then_side() -> Toolpath {
+    Toolpath {
+        moves: vec![
+            rapid(-10.0, 15.0, 10.0),
+            rapid(-10.0, 15.0, 2.0),
+            feed(-10.0, 15.0, -2.0),
+            feed(50.0, 15.0, -2.0),
+            rapid(50.0, 15.0, 10.0),
+            rapid(-10.0, 18.0, 10.0),
+            rapid(-10.0, 18.0, 2.0),
+            feed(-10.0, 18.0, -2.0),
+            feed(50.0, 18.0, -2.0),
+            rapid(50.0, 18.0, 10.0),
+        ],
+    }
+}
+
+#[test]
+fn engagement_of_a_slot_and_a_half_width_pass_is_measured_on_the_stock() {
+    let t = tool(6.0);
+    let mut stock = Stock::new(block(Source::Measured), 0.25).unwrap();
+    let e = stock.cut(&slot_then_side(), &t).unwrap();
+    let c = stock.cell();
+    // The plunge is outside the stock: nothing to cut.
+    assert_eq!(e[2], None);
+    let slot = e[3].unwrap();
+    assert_eq!(slot.kind, EngagementKind::Slot);
+    close(slot.ae, 6.0, 1.5 * c);
+    close(slot.ap, 2.0, 1e-9);
+    let side = e[8].unwrap();
+    assert_eq!(side.kind, EngagementKind::Side);
+    close(side.ae, 3.0, 1.5 * c);
+    close(side.ap, 2.0, 1e-9);
+    // The slot left its floor at -2 under its whole width.
+    for y in [12.5, 15.0, 17.5] {
+        close(stock.height_at(v(20.0, y)).unwrap(), -2.0, 1e-9);
+    }
+    close(stock.height_at(v(20.0, 11.0)).unwrap(), 0.0, 1e-9);
+}
+
+#[test]
+fn a_rapid_through_the_stock_is_engagement_of_kind_rapid_and_stops_the_check() {
+    let t = tool(6.0);
+    let path = Toolpath { moves: vec![rapid(-10.0, 15.0, 10.0), rapid(-10.0, 15.0, -1.0), rapid(50.0, 15.0, -1.0)] };
+    let mut stock = Stock::new(block(Source::Measured), 0.25).unwrap();
+    let e = stock.cut(&path, &t).unwrap();
+    assert_eq!(e[2].map(|e| e.kind), Some(EngagementKind::Rapid));
+    let op = Operation { name: "op".into(), tool: t, spindle_rpm: 10000.0, coolant: false, path };
+    let ctx = Context { material: None, machine: None, confidence: 0.5, stock: Source::Measured };
+    let rep = check_operation(&op, &e, &ctx);
+    let f = rep.findings.iter().find(|f| f.limit == Limit::RapidInMaterial).unwrap();
+    assert_eq!(f.severity, Severity::Stop);
+    assert_eq!(rep.worst(), Severity::Stop);
+    // On a stand-in stock it is only a warning.
+    let rep = check_operation(&op, &e, &Context { stock: Source::Assumed, ..ctx });
+    assert_eq!(rep.worst(), Severity::Warn);
+}
+
+#[test]
+fn pocket_rings_engage_a_slot_first_then_the_stepover() {
+    let t = tool(6.0);
+    let p = PocketParams { stepover: 3.0, climb: true, stock_to_leave: 0.0, tolerance: 0.01, ramp_angle: 0.0 };
+    let path = pocket(&[rect(0.0, 0.0, 40.0, 30.0)], &t, &p, &cut(0.0, -3.0, 3.0)).unwrap();
+    let mut stock = Stock::new(block(Source::Measured), 0.2).unwrap();
+    let e = stock.cut(&path, &t).unwrap();
+    let c = stock.cell();
+    let cuts: Vec<Engagement> = e.iter().flatten().copied().collect();
+    assert!(cuts.iter().any(|e| e.kind == EngagementKind::Slot), "the first ring cuts a slot");
+    assert!(cuts.iter().all(|e| e.ae <= 6.0 + 1e-9 && e.ap <= 3.0 + 1e-9));
+    // Straight ring moves after the first take the stepover.
+    let mut side: Vec<f64> = cuts.iter().filter(|e| e.kind == EngagementKind::Side).map(|e| e.ae).collect();
+    side.sort_by(f64::total_cmp);
+    let median = side[side.len() / 2];
+    close(median, 3.0, 1.5 * c);
+    // Every point of the pocket floor is cut to depth.
+    for (x, y) in [(5.0, 5.0), (20.0, 15.0), (35.0, 25.0), (3.5, 15.0)] {
+        close(stock.height_at(v(x, y)).unwrap(), -3.0, 1e-9);
+    }
+}
+
+#[test]
+fn a_ball_end_leaves_a_rounded_groove() {
+    let t = Tool::new(1, ToolKind::BallEndmill, 6.0, 20.0);
+    let mut stock = Stock::new(block(Source::Measured), 0.1).unwrap();
+    stock.cut(&slot_then_side(), &t).unwrap();
+    // 1.5 mm off the first pass's centre line (and 4.5 mm from the second's): a 3 mm sphere
+    // whose tip is at -2 reaches -2 + 3 - sqrt(9 - 1.5²).
+    close(stock.height_at(v(20.0, 13.5)).unwrap(), -2.0 + 3.0 - (9.0f64 - 2.25).sqrt(), 0.05);
+}
+
+#[test]
+fn cutting_forces_match_a_hand_calculation() {
+    // Full slot: D 10 mm, ap 5 mm, vf 1000 mm/min, 10000 rev/min, 2 teeth, steel kc11 1700, mc 0.25.
+    let f = limits::forces(10.0, 5.0, 1000.0, 10000.0, 10.0, 2, 30.0, 600_000.0, 1700.0, 0.25).unwrap();
+    close(f.fz, 0.05, 1e-12);
+    // hm = 2 fz / π in a slot.
+    close(f.hm, 0.031830989, 1e-8);
+    close(f.kc, 4024.7267, 1e-3);
+    close(f.power, 3353.9389, 1e-3);
+    close(f.torque, 3.2027757, 1e-6);
+    // Cantilever: δ = F L³ / (3 E I), I = π (0.8 D)⁴ / 64.
+    close(f.deflection / f.force, 7.4603880e-5, 1e-11);
+    // Half a tool in, the mean chip is the same as in a slot; a tenth in, it is 0.31 fz.
+    let half = limits::forces(5.0, 5.0, 1000.0, 10000.0, 10.0, 2, 30.0, 600_000.0, 1700.0, 0.25).unwrap();
+    close(half.hm, f.hm, 1e-12);
+    let tenth = limits::forces(1.0, 5.0, 1000.0, 10000.0, 10.0, 2, 30.0, 600_000.0, 1700.0, 0.25).unwrap();
+    close(tenth.hm / tenth.fz, 0.31079978, 1e-7);
+    assert!(limits::forces(0.0, 5.0, 1000.0, 10000.0, 10.0, 2, 30.0, 600_000.0, 1700.0, 0.25).is_none());
+}
+
+fn small_spindle(source: Source) -> Machine {
+    Machine {
+        name: "router".into(),
+        min_rpm: Some(1000.0),
+        max_rpm: Some(24000.0),
+        spindle: vec![
+            SpindlePoint { rpm: 1000.0, power: 2000.0, torque: 19.1 },
+            SpindlePoint { rpm: 6000.0, power: 10000.0, torque: 15.9 },
+            SpindlePoint { rpm: 24000.0, power: 10000.0, torque: 4.0 },
+        ],
+        max_feed: Some(10000.0),
+        axis_thrust: None,
+        source,
+    }
+}
+
+#[test]
+fn the_spindle_curve_is_straight_between_its_points_and_absent_outside() {
+    let m = small_spindle(Source::Catalogue);
+    m.validate().unwrap();
+    let (p, t) = m.spindle_at(3500.0).unwrap();
+    close(p, 6000.0, 1e-9);
+    close(t, 17.5, 1e-9);
+    assert_eq!(m.spindle_at(24000.0), Some((10000.0, 4.0)));
+    assert_eq!(m.spindle_at(500.0), None);
+    assert_eq!(m.spindle_at(f64::NAN), None);
+    let mut bad = m.clone();
+    bad.spindle.swap(0, 1);
+    assert!(bad.validate().is_err());
+    bad = m.clone();
+    bad.max_feed = Some(f64::INFINITY);
+    assert!(bad.validate().is_err());
+}
+
+fn steel(source: Source) -> Material {
+    Material { name: "1045".into(), group: IsoGroup::P, kc11: Some(1700.0), mc: Some(0.25), youngs_modulus: None, source }
+}
+
+/// The slot-then-side path in steel at 10000 rev/min and 1000 mm/min, on `machine`.
+fn checked(machine: &Machine, material: &Material, confidence: f64) -> (Operation, Vec<Option<Engagement>>, OpReport) {
+    let mut t = tool(6.0);
+    t.physical.stick_out = Some(20.0);
+    t.physical.material = Some(ToolMaterial::Carbide);
+    t.physical.source = Source::Measured;
+    t.physical.limits = Some(ToolLimits { max_deflection: Some(0.05), source: Source::Catalogue, ..ToolLimits::default() });
+    let path = slot_then_side();
+    let mut stock = Stock::new(block(Source::Measured), 0.25).unwrap();
+    let e = stock.cut(&path, &t).unwrap();
+    let op = Operation { name: "slot".into(), tool: t, spindle_rpm: 10000.0, coolant: false, path };
+    let ctx = Context { material: Some(material), machine: Some(machine), confidence, stock: Source::Measured };
+    let rep = check_operation(&op, &e, &ctx);
+    (op, e, rep)
+}
+
+#[test]
+fn a_cut_over_the_spindle_stops_and_names_the_limit() {
+    // A 500 W spindle: the slot asks for about 805 W.
+    let mut m = small_spindle(Source::Measured);
+    m.spindle = vec![SpindlePoint { rpm: 1000.0, power: 500.0, torque: 4.8 }, SpindlePoint { rpm: 24000.0, power: 500.0, torque: 0.2 }];
+    let (_, _, rep) = checked(&m, &steel(Source::Measured), 0.5);
+    let f = rep.findings.iter().find(|f| f.limit == Limit::SpindlePower).unwrap();
+    assert_eq!(f.severity, Severity::Stop);
+    assert_eq!(f.move_index, 3, "the slot, not the half-width pass");
+    assert!(f.summary.contains("spindle power"), "{}", f.summary);
+    assert!(f.scale.is_some_and(|s| s < 1.0));
+    close(f.demand, 804.945, 1e-2);
+    assert_eq!(rep.binding, Some(Limit::SpindlePower));
+    // The same cut on guessed cutting data only warns.
+    let (_, _, rep) = checked(&m, &steel(Source::Assumed), 0.5);
+    assert!(rep.findings.iter().all(|f| f.severity == Severity::Warn));
+    let rough = Material { kc11: None, mc: None, ..steel(Source::Measured) };
+    assert_eq!(rough.kienzle().2, Source::Assumed);
+}
+
+#[test]
+fn confidence_moves_the_margin_but_never_below_the_limit() {
+    // A spindle with 10% more power than the slot needs.
+    let need = checked(&small_spindle(Source::Measured), &steel(Source::Measured), 0.5).2.peak_power;
+    let mut m = small_spindle(Source::Measured);
+    m.spindle = vec![SpindlePoint { rpm: 1000.0, power: need * 1.1, torque: 100.0 }, SpindlePoint { rpm: 24000.0, power: need * 1.1, torque: 100.0 }];
+    // Aggressive: factor 1, under the limit, nothing to report.
+    let (_, _, rep) = checked(&m, &steel(Source::Measured), 1.0);
+    assert!(rep.findings.iter().all(|f| f.limit != Limit::SpindlePower));
+    // Out-of-range confidence is clamped to aggressive, never past it.
+    let (_, _, rep) = checked(&m, &steel(Source::Measured), 7.0);
+    assert!(rep.findings.iter().all(|f| f.limit != Limit::SpindlePower));
+    // Conservative: factor 2, over the margin but under the limit itself: a warning.
+    let (_, _, rep) = checked(&m, &steel(Source::Measured), 0.0);
+    let f = rep.findings.iter().find(|f| f.limit == Limit::SpindlePower).unwrap();
+    assert_eq!(f.severity, Severity::Warn);
+}
+
+#[test]
+fn adapted_feeds_bring_every_move_to_its_binding_limit() {
+    let mut m = small_spindle(Source::Measured);
+    m.spindle = vec![SpindlePoint { rpm: 1000.0, power: 1000.0, torque: 9.5 }, SpindlePoint { rpm: 24000.0, power: 1000.0, torque: 0.4 }];
+    let mat = steel(Source::Measured);
+    let (mut op, e, rep) = checked(&m, &mat, 0.5);
+    adapt_feeds(&mut op, &rep, 0.25, 2.0, 1.0e9);
+    let feeds: Vec<f64> = op.path.moves.iter().filter_map(|m| if let Move::Feed { feed, .. } = m { Some(*feed) } else { None }).collect();
+    // The slot slows down; the half-width pass, with the same mean chip and half the width,
+    // speeds up, but at most to twice the programmed feed.
+    assert!(feeds[1] < 1000.0, "{feeds:?}");
+    assert!(feeds[3] > feeds[1] && feeds[3] <= 2000.0 + 1e-9, "{feeds:?}");
+    let ctx = Context { material: Some(&mat), machine: Some(&m), confidence: 0.5, stock: Source::Measured };
+    let again = check_operation(&op, &e, &ctx);
+    assert!(again.findings.iter().all(|f| f.limit != Limit::SpindlePower), "{:?}", again.findings);
+    // Neighbouring moves are kept within the ratio, by lowering only.
+    let (mut smooth, _, rep) = checked(&m, &mat, 0.5);
+    adapt_feeds(&mut smooth, &rep, 0.25, 2.0, 1.2);
+    let f2: Vec<f64> = smooth.path.moves.iter().filter_map(|m| if let Move::Feed { feed, .. } = m { Some(*feed) } else { None }).collect();
+    // Moves next to each other in the path; a rapid between two cuts starts afresh.
+    for w in smooth.path.moves.windows(2) {
+        if let [Move::Feed { feed: a, .. }, Move::Feed { feed: b, .. }] = w {
+            assert!(*b <= a * 1.2 + 1e-9 && *a <= b * 1.2 + 1e-9, "{f2:?}");
+        }
+    }
+    for (a, b) in f2.iter().zip(&feeds) {
+        assert!(a <= b, "smoothing only lowers: {f2:?} {feeds:?}");
+    }
+}
+
+#[test]
+fn a_guess_never_speeds_a_cut_up() {
+    // Without trusted data the feed may only come down.
+    let (mut op, _, rep) = checked(&small_spindle(Source::Assumed), &steel(Source::Assumed), 1.0);
+    adapt_feeds(&mut op, &rep, 0.25, 2.0, 1.0e9);
+    for m in &op.path.moves {
+        if let Move::Feed { feed, .. } = m {
+            assert!(*feed <= 1000.0 + 1e-9);
+        }
+    }
+}
+
+#[test]
+fn hostile_physical_values_are_refused() {
+    let mut t = tool(6.0);
+    t.physical.runout = Some(3.0);
+    assert!(t.validate().is_err());
+    t.physical.runout = Some(f64::NAN);
+    assert!(t.validate().is_err());
+    t.physical.runout = None;
+    t.physical.stick_out = Some(-1.0);
+    assert!(t.validate().is_err());
+    t.physical.stick_out = Some(25.0);
+    t.physical.wear = Some(1.5);
+    assert!(t.validate().is_err());
+    t.physical.wear = Some(0.2);
+    t.validate().unwrap();
+    let bad = Material { kc11: Some(f64::INFINITY), ..steel(Source::Measured) };
+    assert!(bad.validate().is_err());
+    assert!(Stock::new(StockBounds { min: Vec3::new(0.0, 0.0, 0.0), max: Vec3::new(f64::NAN, 1.0, 1.0), source: Source::Measured }, 0.1).is_err());
+    // A huge box gets coarser cells instead of running out of memory.
+    let big =
+        Stock::new(StockBounds { min: Vec3::new(0.0, 0.0, -1.0), max: Vec3::new(10_000.0, 10_000.0, 0.0), source: Source::Measured }, 0.01).unwrap();
+    assert!(big.cell() >= 5.0);
+}
+
+#[test]
+fn a_tool_saved_before_physical_data_loads_and_round_trips() {
+    let old: Tool = serde_json::from_str(r#"{"number":1,"kind":"flat_endmill","diameter":6,"flute_length":20}"#).unwrap();
+    assert!(old.physical.is_empty());
+    assert!(!serde_json::to_string(&old).unwrap().contains("physical"));
+    let mut t = tool(6.0);
+    t.physical.holder = Some(Holder { name: "ER32".into(), gauge_length: Some(60.0), nose_diameter: Some(40.0), max_rpm: Some(20000.0) });
+    t.physical.catalogue = Some(CatalogueRef { library: "shop".into(), id: "em-6".into(), version: String::new() });
+    let back: Tool = serde_json::from_str(&serde_json::to_string(&t).unwrap()).unwrap();
+    assert_eq!(back, t);
+}
+
+#[test]
+fn a_spindle_over_the_holder_speed_stops_without_any_feed_fix() {
+    let mut m = small_spindle(Source::Measured);
+    m.max_rpm = Some(8000.0);
+    let (_, _, rep) = checked(&m, &steel(Source::Measured), 0.5);
+    let f = rep.findings.iter().find(|f| f.limit == Limit::SpindleSpeed).unwrap();
+    assert_eq!(f.severity, Severity::Stop);
+    assert_eq!(f.scale, None);
+}

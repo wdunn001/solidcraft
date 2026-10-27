@@ -819,30 +819,40 @@ pub enum CamOperation {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         coolant: bool,
     },
+    /// Manufacture dialog draft (2D Face, Drill, 3D, turning, …). Posted when that op has a toolpath.
+    Draft {
+        name: String,
+        #[serde(default)]
+        tool: u32,
+        kind: String,
+        spec: serde_json::Value,
+    },
 }
 
 impl CamOperation {
     pub fn name(&self) -> &str {
         match self {
-            CamOperation::Contour { name, .. } | CamOperation::Pocket { name, .. } => name,
+            CamOperation::Contour { name, .. } | CamOperation::Pocket { name, .. } | CamOperation::Draft { name, .. } => name,
         }
     }
 
     pub fn tool(&self) -> u32 {
         match self {
-            CamOperation::Contour { tool, .. } | CamOperation::Pocket { tool, .. } => *tool,
+            CamOperation::Contour { tool, .. } | CamOperation::Pocket { tool, .. } | CamOperation::Draft { tool, .. } => *tool,
         }
     }
 
-    pub fn geometry(&self) -> &CamGeometry {
+    pub fn geometry(&self) -> Option<&CamGeometry> {
         match self {
-            CamOperation::Contour { geometry, .. } | CamOperation::Pocket { geometry, .. } => geometry,
+            CamOperation::Contour { geometry, .. } | CamOperation::Pocket { geometry, .. } => Some(geometry),
+            CamOperation::Draft { .. } => None,
         }
     }
 
-    pub fn cut(&self) -> &CamCut {
+    pub fn cut(&self) -> Option<&CamCut> {
         match self {
-            CamOperation::Contour { cut, .. } | CamOperation::Pocket { cut, .. } => cut,
+            CamOperation::Contour { cut, .. } | CamOperation::Pocket { cut, .. } => Some(cut),
+            CamOperation::Draft { .. } => None,
         }
     }
 
@@ -851,8 +861,28 @@ impl CamOperation {
         if name.is_empty() || name.len() > 128 {
             return Err(DocError::Invalid("a CAM operation name must be 1 to 128 characters".into()));
         }
-        self.geometry().validate()?;
-        let cut = self.cut();
+        match self {
+            CamOperation::Draft { kind, spec, tool, .. } => {
+                if kind.is_empty() || kind.len() > 64 {
+                    return Err(DocError::Invalid("a CAM draft kind must be 1 to 64 characters".into()));
+                }
+                if *tool > 9999 {
+                    return Err(DocError::Invalid("a CAM draft tool number must be 0 to 9999".into()));
+                }
+                if !spec.is_object() {
+                    return Err(DocError::Invalid("a CAM draft spec must be an object".into()));
+                }
+                return Ok(());
+            }
+            CamOperation::Contour { .. } | CamOperation::Pocket { .. } => {}
+        }
+        let Some(geometry) = self.geometry() else {
+            return Err(DocError::Invalid("a posted CAM operation needs geometry".into()));
+        };
+        geometry.validate()?;
+        let Some(cut) = self.cut() else {
+            return Err(DocError::Invalid("a posted CAM operation needs cut heights".into()));
+        };
         check_expr(&cut.clearance, "clearance")?;
         check_expr(&cut.retract, "retract")?;
         check_expr(&cut.top, "top")?;
@@ -874,6 +904,7 @@ impl CamOperation {
                 check_expr(&params.ramp_angle, "ramp_angle")?;
                 check_spindle(*spindle_rpm)?;
             }
+            CamOperation::Draft { .. } => {}
         }
         Ok(())
     }

@@ -49,6 +49,30 @@ pub struct State {
     pub tool_library_dialog: Option<crate::manufacture_tools::ToolLibraryState>,
     pub edit_tool_dialog: Option<crate::manufacture_tools::EditToolState>,
     pub manage_stub_dialog: Option<crate::manufacture_tools::ManageStubState>,
+    pub selected_op: Option<usize>,
+    pub twod_dialog: Option<crate::manufacture_2d::TwodDialogState>,
+    pub contour_dialog: Option<crate::manufacture_contour::ContourDialogState>,
+    pub drill_dialog: Option<crate::manufacture_drill::DrillDialogState>,
+    pub hole_rec_dialog: Option<crate::manufacture_hole_recognition::HoleRecDialogState>,
+    pub threed_dialog: Option<crate::manufacture_3d::ThreedDialogState>,
+    pub multiaxis_dialog: Option<crate::manufacture_multiaxis::MultiAxisDialogState>,
+    pub turning_dialog: Option<crate::manufacture_turning::TurningDialogState>,
+    pub part_handling_dialog: Option<crate::manufacture_part_handling::PartHandlingDialogState>,
+    pub inspection_dialog: Option<crate::manufacture_inspection::InspectionDialogState>,
+    pub manual_inspection_dialog: Option<crate::manufacture_inspection::ManualInspectionDialogState>,
+    pub fabrication_dialog: Option<crate::manufacture_fabrication::FabricationDialogState>,
+    pub nest_dialog: Option<crate::manufacture_fabrication::NestDialogState>,
+    pub additive_dialog: Option<crate::manufacture_additive::AdditiveDialogState>,
+    pub from_gcode_dialog: Option<crate::manufacture_additive::FromGcodeState>,
+    pub modify_dialog: Option<crate::manufacture_modify::ModifyDialogState>,
+    pub modifications: Vec<crate::mfg_draft::ToolpathModification>,
+    pub post_dialog: Option<crate::manufacture_post::PostDialogState>,
+    pub machining_time_dialog: Option<crate::manufacture_post::MachiningTimeState>,
+    pub setup_sheet_dialog: Option<crate::manufacture_post::SetupSheetState>,
+    pub toolpath_segments: Vec<crate::mfg_draft::PathSegment>,
+    pub nc_programs: Vec<crate::mfg_draft::NcProgram>,
+    pub library_dialog: Option<crate::manufacture_libraries::LibraryDialogState>,
+    pub library_remotes: Vec<crate::mfg_draft::library::LibraryRemote>,
 }
 
 pub fn is_tab(tab: &str) -> bool {
@@ -104,6 +128,25 @@ pub fn close_floating_dialogs(app: &mut SolveApp) {
     app.manufacture_workspace.tool_library_dialog = None;
     app.manufacture_workspace.edit_tool_dialog = None;
     app.manufacture_workspace.manage_stub_dialog = None;
+    app.manufacture_workspace.twod_dialog = None;
+    app.manufacture_workspace.contour_dialog = None;
+    app.manufacture_workspace.drill_dialog = None;
+    app.manufacture_workspace.hole_rec_dialog = None;
+    app.manufacture_workspace.threed_dialog = None;
+    app.manufacture_workspace.multiaxis_dialog = None;
+    app.manufacture_workspace.turning_dialog = None;
+    app.manufacture_workspace.part_handling_dialog = None;
+    app.manufacture_workspace.inspection_dialog = None;
+    app.manufacture_workspace.manual_inspection_dialog = None;
+    app.manufacture_workspace.fabrication_dialog = None;
+    app.manufacture_workspace.nest_dialog = None;
+    app.manufacture_workspace.additive_dialog = None;
+    app.manufacture_workspace.from_gcode_dialog = None;
+    app.manufacture_workspace.modify_dialog = None;
+    app.manufacture_workspace.post_dialog = None;
+    app.manufacture_workspace.machining_time_dialog = None;
+    app.manufacture_workspace.setup_sheet_dialog = None;
+    app.manufacture_workspace.library_dialog = None;
     app.ui.pick_bodies = false;
 }
 
@@ -132,6 +175,13 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             crate::manufacture_setup::open_new(app);
             false
         }
+        "manufacture.setup.edit" => {
+            let name = app.manufacture_workspace.active_setup.clone();
+            if !name.is_empty() {
+                crate::manufacture_setup::open_edit(app, &name);
+            }
+            false
+        }
         "cam.setup" => {
             crate::manufacture_setup::open_new(app);
             false
@@ -144,17 +194,72 @@ pub fn start_hook(app: &mut SolveApp, id: &str) -> bool {
             crate::manufacture_tools::open_edit_tool(app, None);
             false
         }
-        "manufacture.manage.machine_library" => {
-            crate::manufacture_tools::open_manage_stub(app, crate::manufacture_tools::ManageStubKind::MachineLibrary);
+        id if id.starts_with("manufacture.manage.") => crate::manufacture_libraries::open_from_command(app, id),
+        "manufacture.2d.contour" => {
+            enter(app);
+            show_tab(app, "MILLING");
+            crate::manufacture_contour::open_new(app);
             false
         }
-        "manufacture.manage.post_library" => {
-            crate::manufacture_tools::open_manage_stub(app, crate::manufacture_tools::ManageStubKind::PostLibrary);
+        "manufacture.drill" => {
+            enter(app);
+            show_tab(app, "MILLING");
+            crate::manufacture_drill::open_new(app);
             false
         }
-        "manufacture.manage.template_library" => {
-            crate::manufacture_tools::open_manage_stub(app, crate::manufacture_tools::ManageStubKind::TemplateLibrary);
+        "manufacture.hole_recognition" => {
+            enter(app);
+            show_tab(app, "MILLING");
+            crate::manufacture_hole_recognition::open_new(app);
             false
+        }
+        id if id.starts_with("manufacture.post.") => {
+            enter(app);
+            crate::manufacture_post::open_from_command(app, id)
+        }
+        id if id.starts_with("manufacture.modify.") => {
+            enter(app);
+            crate::manufacture_modify::open_from_command(app, id)
+        }
+        id if id.starts_with("manufacture.additive.") => {
+            enter(app);
+            show_tab(app, "ADDITIVE");
+            crate::manufacture_additive::open_from_command(app, id)
+        }
+        id if id.starts_with("manufacture.fabrication.") => {
+            enter(app);
+            show_tab(app, "FABRICATION");
+            crate::manufacture_fabrication::open_from_command(app, id)
+        }
+        id if id.starts_with("manufacture.inspection.") => {
+            enter(app);
+            show_tab(app, "INSPECTION");
+            crate::manufacture_inspection::open_from_command(app, id)
+        }
+        id if id.starts_with("manufacture.part_handling.") => {
+            enter(app);
+            show_tab(app, "TURNING");
+            crate::manufacture_part_handling::open_from_command(app, id)
+        }
+        id if id.starts_with("manufacture.turning.") => {
+            enter(app);
+            show_tab(app, "TURNING");
+            crate::manufacture_turning::open_from_command(app, id)
+        }
+        id if id.starts_with("manufacture.multiaxis.") => {
+            enter(app);
+            show_tab(app, "MILLING");
+            crate::manufacture_multiaxis::open_from_command(app, id)
+        }
+        id if id.starts_with("manufacture.3d.") => {
+            enter(app);
+            show_tab(app, "MILLING");
+            crate::manufacture_3d::open_from_command(app, id)
+        }
+        id if id.starts_with("manufacture.2d.") => {
+            enter(app);
+            show_tab(app, "MILLING");
+            crate::manufacture_2d::open_from_command(app, id)
         }
         id if id.starts_with("manufacture.") => {
             enter(app);
@@ -190,6 +295,20 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
 pub fn panel(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::manufacture_setup::show_dialogs(app, ui);
     crate::manufacture_tools::show_dialogs(app, ui);
+    crate::manufacture_2d::show_dialogs(app, ui);
+    crate::manufacture_contour::show_dialogs(app, ui);
+    crate::manufacture_drill::show_dialogs(app, ui);
+    crate::manufacture_hole_recognition::show_dialogs(app, ui);
+    crate::manufacture_3d::show_dialogs(app, ui);
+    crate::manufacture_multiaxis::show_dialogs(app, ui);
+    crate::manufacture_turning::show_dialogs(app, ui);
+    crate::manufacture_part_handling::show_dialogs(app, ui);
+    crate::manufacture_inspection::show_dialogs(app, ui);
+    crate::manufacture_fabrication::show_dialogs(app, ui);
+    crate::manufacture_additive::show_dialogs(app, ui);
+    crate::manufacture_modify::show_dialogs(app, ui);
+    crate::manufacture_post::show_dialogs(app, ui);
+    crate::manufacture_libraries::show_dialogs(app, ui);
 }
 
 pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {

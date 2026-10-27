@@ -11,7 +11,7 @@ use solidcraft_cam::{
 };
 use solidcraft_doc::cam::{
     CamContourParams, CamCut, CamFaceRef, CamGeometry, CamOperation, CamPocketParams, CamSettings, CamSetup, CamSide, MAX_OPS, MAX_SETUPS, MAX_TOOLS,
-    PolygonRegion, StockBox, WcsOriginMode, default_contour_params, default_cut, default_pocket_params,
+    PolygonRegion, SetupOperationType, StockBox, WcsOriginMode, default_contour_params, default_cut, default_pocket_params,
 };
 use solidcraft_doc::expr::Kind;
 use solidcraft_doc::project::resolve_face_indices;
@@ -50,6 +50,9 @@ pub static COMMANDS: &[CommandSpec] = &[
          clearance?; retract?; top?; bottom; stepdown?; feed?; plunge_feed?; spindle_rpm?; coolant?",
     ),
     CommandSpec::new("cam.op.remove", "Remove CAM Operation", delete_op).icon("delete").params("setup; name"),
+    CommandSpec::new("cam.op.replace", "Replace CAM Operations", op_replace).icon("list").params(
+        "setup; operations: tagged Manufacture dialog drafts (type, name, tool_number, …); operation_type?: milling|turning|cutting|additive",
+    ),
     CommandSpec::new("cam.post", "Post Process", post_cmd).icon("export").noundo().params(
         "setup; post?: rs274 | name of a saved post (default rs274); program?: name (default the setup's) → \
          {gcode, extension, post, operations, readback}. G-code is always read back and checked against the toolpaths.",
@@ -269,6 +272,53 @@ fn stock_box(cmd: &str, v: &Value) -> Result<StockBox> {
     let box_ = StockBox { min: parse(min)?, max: parse(max)? };
     box_.validate().map_err(|e| bad(cmd, e.to_string()))?;
     Ok(box_)
+}
+
+fn op_replace(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "cam.op.replace";
+    let setup_name = str_(p, "setup").map(str::trim).filter(|n| !n.is_empty()).ok_or_else(|| bad(cmd, "`setup` is required"))?.to_string();
+    let raw = p.get("operations").and_then(Value::as_array).ok_or_else(|| bad(cmd, "`operations` must be an array"))?;
+    if raw.len() > MAX_OPS {
+        return Err(bad(cmd, format!("a setup has at most {MAX_OPS} operations")));
+    }
+    let mut operations = Vec::with_capacity(raw.len());
+    for (i, v) in raw.iter().enumerate() {
+        operations.push(draft_from_spec(cmd, i, v)?);
+    }
+    for op in &operations {
+        op.validate().map_err(|e| bad(cmd, e.to_string()))?;
+    }
+    let operation_type = match p.get("operation_type") {
+        None => None,
+        Some(_) => Some(parse_value(cmd, p, "operation_type", SetupOperationType::Milling)?),
+    };
+    let doc = s.doc_mut();
+    let setup = doc.cam.setup_mut(&setup_name).ok_or_else(|| bad(cmd, format!("no setup `{setup_name}` (cam.setup first)")))?;
+    setup.operations = operations;
+    if let Some(ot) = operation_type {
+        setup.operation_type = ot;
+    }
+    Ok(json!({"setup": setup_name, "operations": setup.operations.len()}))
+}
+
+fn draft_from_spec(cmd: &str, index: usize, v: &Value) -> Result<CamOperation> {
+    if !v.is_object() {
+        return Err(bad(cmd, format!("operations[{index}] must be an object")));
+    }
+    let kind = v.get("type").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty() && s.len() <= 64).unwrap_or("op").to_string();
+    let name = v
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{kind} {}", index + 1));
+    let name = name.chars().take(128).collect::<String>();
+    let tool = v.get("tool_number").and_then(Value::as_u64).or_else(|| v.get("tool").and_then(Value::as_u64)).unwrap_or(0);
+    if tool > 9999 {
+        return Err(bad(cmd, format!("operations[{index}].tool_number must be 0…9999")));
+    }
+    Ok(CamOperation::Draft { name, tool: tool as u32, kind, spec: v.clone() })
 }
 
 fn contour_cmd(s: &mut Session, p: &Value) -> Result<Value> {
@@ -504,14 +554,21 @@ fn post_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let program_name = str_(p, "program").unwrap_or(setup.name.as_str()).to_string();
     let mut program = Program { name: program_name, operations: Vec::new(), work_offset: Some(setup.work_offset) };
     for op in &setup.operations {
+        if matches!(op, CamOperation::Draft { .. }) {
+            continue;
+        }
         let tool = s.doc.cam.tool(op.tool()).cloned().ok_or_else(|| bad(cmd, format!("operation `{}` needs tool {}", op.name(), op.tool())))?;
         let path = build_path(s, &setup, op).map_err(|e| bad(cmd, e))?;
         let (spindle_rpm, coolant) = match op {
             CamOperation::Contour { spindle_rpm, coolant, .. } | CamOperation::Pocket { spindle_rpm, coolant, .. } => {
                 (spindle_rpm.or(tool.spindle_rpm).unwrap_or(6000.0), *coolant)
             }
+            CamOperation::Draft { .. } => continue,
         };
         program.operations.push(Operation { name: op.name().into(), tool, spindle_rpm, coolant, path });
+    }
+    if program.operations.is_empty() {
+        return Err(bad(cmd, format!("setup `{setup_name}` has no posted toolpaths yet")));
     }
     let gcode = emit(&program, &post).map_err(|e| bad(cmd, e.to_string()))?;
     let mut out = json!({
@@ -753,8 +810,10 @@ fn engine_pocket(s: &Session, p: &CamPocketParams) -> std::result::Result<Pocket
 }
 
 fn build_path(s: &Session, setup: &CamSetup, op: &CamOperation) -> std::result::Result<solidcraft_cam::Toolpath, String> {
-    let regions = resolve_geometry(s, setup, op.geometry())?;
-    let cut = engine_cut(s, op.cut())?;
+    let geometry = op.geometry().ok_or_else(|| format!("operation `{}` has no posted toolpath yet", op.name()))?;
+    let cut = op.cut().ok_or_else(|| format!("operation `{}` has no posted toolpath yet", op.name()))?;
+    let regions = resolve_geometry(s, setup, geometry)?;
+    let cut = engine_cut(s, cut)?;
     let tool = s.doc.cam.tool(op.tool()).ok_or_else(|| format!("there is no tool {}", op.tool()))?;
     match op {
         CamOperation::Contour { params, .. } => {
@@ -765,6 +824,7 @@ fn build_path(s: &Session, setup: &CamSetup, op: &CamOperation) -> std::result::
             let params = engine_pocket(s, params)?;
             pocket(&regions, tool, &params, &cut).map_err(|e| e.to_string())
         }
+        CamOperation::Draft { name, .. } => Err(format!("operation `{name}` has no posted toolpath yet")),
     }
 }
 
@@ -897,6 +957,9 @@ fn setup_json(setup: &CamSetup) -> Value {
             CamOperation::Pocket { name, tool, geometry, params, cut, spindle_rpm, coolant } => json!({
                 "type": "pocket", "name": name, "tool": tool, "geometry": geometry,
                 "params": params, "cut": cut, "spindle_rpm": spindle_rpm, "coolant": coolant,
+            }),
+            CamOperation::Draft { name, tool, kind, spec } => json!({
+                "type": "draft", "name": name, "tool": tool, "kind": kind, "spec": spec,
             }),
         }).collect::<Vec<_>>(),
     })
@@ -1102,6 +1165,30 @@ mod tests {
         assert!(setup.stock_integrity.stress_relieved);
         assert_eq!(setup.stock_integrity.alloy, "7050-T7451");
         assert_eq!(setup.stock_integrity.plate_thickness_mm, 90.5);
+    }
+
+    #[test]
+    fn op_replace_stores_dialog_drafts_without_a_toolpath() {
+        let mut s = Session::default();
+        run(&mut s, "cam.setup", json!({"name": "Top"}));
+        run(
+            &mut s,
+            "cam.op.replace",
+            json!({
+                "setup": "Top",
+                "operations": [{ "type": "profile", "name": "Outside", "tool_number": 1, "depth": 6.0 }]
+            }),
+        );
+        match &s.doc.cam.setups[0].operations[0] {
+            CamOperation::Draft { name, kind, tool, .. } => {
+                assert_eq!(name, "Outside");
+                assert_eq!(kind, "profile");
+                assert_eq!(*tool, 1);
+            }
+            other => panic!("{other:?}"),
+        }
+        let err = s.execute("cam.post", &json!({"setup": "Top"})).unwrap_err().to_string();
+        assert!(err.contains("no posted toolpaths"), "{err}");
     }
 
     #[test]

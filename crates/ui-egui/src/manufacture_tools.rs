@@ -329,11 +329,7 @@ impl Tool {
     }
 
     pub fn feed_per_tooth(&self, feedrate: f64, spindle_rpm: u32) -> f64 {
-        if spindle_rpm == 0 || self.flutes == 0 {
-            0.0
-        } else {
-            feedrate / (f64::from(spindle_rpm) * f64::from(self.flutes))
-        }
+        if spindle_rpm == 0 || self.flutes == 0 { 0.0 } else { feedrate / (f64::from(spindle_rpm) * f64::from(self.flutes)) }
     }
 
     fn core_diameter(&self) -> f64 {
@@ -362,11 +358,7 @@ impl Tool {
     }
 
     pub fn tooth_passing_hz(&self, spindle_rpm: u32) -> f64 {
-        if spindle_rpm == 0 || self.flutes == 0 {
-            0.0
-        } else {
-            f64::from(spindle_rpm) * f64::from(self.flutes) / 60.0
-        }
+        if spindle_rpm == 0 || self.flutes == 0 { 0.0 } else { f64::from(spindle_rpm) * f64::from(self.flutes) / 60.0 }
     }
 }
 
@@ -1327,13 +1319,7 @@ mod tests {
 
     #[test]
     fn carbide_stick_out_stiffness_matches_stock_integrity_example() {
-        let t = Tool {
-            diameter: 10.0,
-            shaft_diameter: 8.0,
-            length_below_holder: 30.0,
-            material: ToolMaterial::Carbide,
-            ..Tool::default()
-        };
+        let t = Tool { diameter: 10.0, shaft_diameter: 8.0, length_below_holder: 30.0, material: ToolMaterial::Carbide, ..Tool::default() };
         let k = t.stiffness_n_per_um();
         assert!((k - 13.4).abs() < 0.1, "{k}");
         assert!((t.tooth_passing_hz(12_000) - 800.0).abs() < 1e-9);

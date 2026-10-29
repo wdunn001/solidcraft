@@ -186,6 +186,7 @@ pub mod prefs;
 pub mod prefs_notice;
 #[cfg(test)]
 mod preselect_tests;
+pub mod presence;
 pub mod preview;
 #[cfg(test)]
 mod primitive_units_tests;
